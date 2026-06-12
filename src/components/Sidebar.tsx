@@ -1,0 +1,205 @@
+import React, { useState } from 'react';
+import { useChat } from '../context/ChatContext';
+import { useAuth } from '../context/AuthContext';
+import { 
+  Hash, 
+  Plus, 
+  LogOut, 
+  Settings, 
+  ChevronDown, 
+  ChevronRight, 
+  Users
+} from 'lucide-react';
+import { CreateChannelModal, StartDMModal, ProfileModal } from './Modals';
+
+export const Sidebar: React.FC = () => {
+  const { 
+    conversations, 
+    members, 
+    profiles, 
+    activeConversation, 
+    setActiveConversationId 
+  } = useChat();
+
+  const { user, profile, signOut } = useAuth();
+
+  const [showChannelModal, setShowChannelModal] = useState(false);
+  const [showDMModal, setShowDMModal] = useState(false);
+  const [showProfileModal, setShowProfileModal] = useState(false);
+
+  const [channelsCollapsed, setChannelsCollapsed] = useState(false);
+  const [dmsCollapsed, setDmsCollapsed] = useState(false);
+
+  // Filter conversations
+  const channels = conversations.filter(c => !c.is_dm);
+  const dms = conversations.filter(c => c.is_dm);
+
+  // Helper to extract DM conversation visual details (recipient username, avatar, online status)
+  const getDMDetails = (convId: string) => {
+    const convMembers = members.filter(m => m.conversation_id === convId);
+    const otherMember = convMembers.find(m => m.profile_id !== user?.id);
+    
+    if (!otherMember) {
+      return {
+        name: `${profile?.full_name || profile?.username || 'You'} (you)`,
+        avatarUrl: profile?.avatar_url,
+        isOnline: true,
+        statusText: profile?.status_text
+      };
+    }
+
+    const otherProfile = profiles.find(p => p.id === otherMember.profile_id);
+    return {
+      name: otherProfile ? (otherProfile.full_name || otherProfile.username) : 'Loading user...',
+      avatarUrl: otherProfile?.avatar_url,
+      isOnline: otherProfile?.is_online || false,
+      statusText: otherProfile?.status_text
+    };
+  };
+
+  return (
+    <>
+      <aside className="sidebar">
+        {/* Sidebar Header */}
+        <div className="sidebar-header">
+          <div className="workspace-name">
+            <Users size={18} className="pulse" style={{ color: 'var(--accent-hover)' }} />
+            <span>ZarnexHub</span>
+          </div>
+          <button onClick={() => setShowProfileModal(true)} title="Edit profile settings">
+            <Settings size={18} className="logout-btn" />
+          </button>
+        </div>
+
+        {/* Channels & DMs Scroll Workspace */}
+        <div className="sidebar-content">
+          {/* CHANNELS SECTION */}
+          <div className="sidebar-section">
+            <div className="sidebar-section-header">
+              <button 
+                style={{ display: 'flex', alignItems: 'center', gap: '4px' }}
+                onClick={() => setChannelsCollapsed(!channelsCollapsed)}
+              >
+                {channelsCollapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
+                <span>Channels ({channels.length})</span>
+              </button>
+              <button onClick={() => setShowChannelModal(true)} title="Create a channel">
+                <Plus size={14} />
+              </button>
+            </div>
+
+            {!channelsCollapsed && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                {channels.map((chan) => (
+                  <div
+                    key={chan.id}
+                    className={`sidebar-item ${activeConversation?.id === chan.id ? 'active' : ''}`}
+                    onClick={() => setActiveConversationId(chan.id)}
+                  >
+                    <div className="sidebar-item-label">
+                      <Hash size={16} style={{ color: activeConversation?.id === chan.id ? 'var(--text-primary)' : 'var(--text-muted)' }} />
+                      <span>{chan.name}</span>
+                    </div>
+                    {chan.is_private && <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>🔒</span>}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* DIRECT MESSAGES SECTION */}
+          <div className="sidebar-section">
+            <div className="sidebar-section-header">
+              <button 
+                style={{ display: 'flex', alignItems: 'center', gap: '4px' }}
+                onClick={() => setDmsCollapsed(!dmsCollapsed)}
+              >
+                {dmsCollapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
+                <span>Direct Messages ({dms.length})</span>
+              </button>
+              <button onClick={() => setShowDMModal(true)} title="Start new direct message">
+                <Plus size={14} />
+              </button>
+            </div>
+
+            {!dmsCollapsed && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                {dms.map((dm) => {
+                  const details = getDMDetails(dm.id);
+                  return (
+                    <div
+                      key={dm.id}
+                      className={`sidebar-item ${activeConversation?.id === dm.id ? 'active' : ''}`}
+                      onClick={() => setActiveConversationId(dm.id)}
+                    >
+                      <div className="sidebar-item-label">
+                        <div className="avatar-wrapper">
+                          <div className="avatar avatar-sm">
+                            {details.avatarUrl ? (
+                              <img src={details.avatarUrl} alt="" style={{ width: '100%', height: '100%', borderRadius: 'inherit', objectFit: 'cover' }} />
+                            ) : (
+                              details.name.substring(0, 2).toUpperCase()
+                            )}
+                          </div>
+                          <span className={`status-dot ${details.isOnline ? 'online' : 'offline'}`}></span>
+                        </div>
+                        <span style={{ textDecoration: dm.id === activeConversation?.id ? 'none' : 'none' }}>
+                          {details.name}
+                        </span>
+                      </div>
+                      {details.statusText && (
+                        <span 
+                          title={details.statusText} 
+                          style={{ fontSize: '0.8rem', opacity: 0.6, cursor: 'help' }}
+                        >
+                          💬
+                        </span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Footer Profile Section */}
+        {user && (
+          <div className="sidebar-footer">
+            <div className="user-summary" onClick={() => setShowProfileModal(true)}>
+              <div className="avatar-wrapper">
+                <div className="avatar">
+                  {profile?.avatar_url ? (
+                    <img src={profile.avatar_url} alt="" style={{ width: '100%', height: '100%', borderRadius: 'inherit', objectFit: 'cover' }} />
+                  ) : (
+                    (profile?.username || user.email || 'U').substring(0, 2).toUpperCase()
+                  )}
+                </div>
+                <span className="status-dot online"></span>
+              </div>
+              <div className="user-info">
+                <span className="user-name" style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                  <span>{profile?.full_name || profile?.username || user.email?.split('@')[0]}</span>
+                  {(profile?.streak_count || 0) > 0 && (
+                    <span style={{ fontSize: '0.75rem', color: '#f97316', fontWeight: 'bold' }} title="Messaging Streak">
+                      🔥{profile?.streak_count}
+                    </span>
+                  )}
+                </span>
+                <span className="user-status-text">{profile?.status_text || 'Active'}</span>
+              </div>
+            </div>
+            <button className="logout-btn" onClick={signOut} title="Sign Out">
+              <LogOut size={18} />
+            </button>
+          </div>
+        )}
+      </aside>
+
+      {/* Rendering Modals */}
+      {showChannelModal && <CreateChannelModal onClose={() => setShowChannelModal(false)} />}
+      {showDMModal && <StartDMModal onClose={() => setShowDMModal(false)} />}
+      {showProfileModal && <ProfileModal onClose={() => setShowProfileModal(false)} />}
+    </>
+  );
+};
