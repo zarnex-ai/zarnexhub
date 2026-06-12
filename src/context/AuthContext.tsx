@@ -34,20 +34,50 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // Fetch profile details from database
+  // Fetch profile details from database, or create one if it is missing (self-healing fallback)
   const fetchProfile = async (userId: string): Promise<Profile | null> => {
     try {
       const { data, error } = await supabase
         .from('profiles')
         .select('*')
         .eq('id', userId)
-        .single();
+        .maybeSingle();
 
       if (error) {
         console.error('Error fetching profile:', error);
         return null;
       }
-      return data;
+
+      if (!data) {
+        // Profile doesn't exist yet (e.g. user registered before trigger/table was created)
+        // Get user session metadata to prepopulate profile
+        const { data: { user } } = await supabase.auth.getUser();
+        if (user) {
+          const baseUsername = user.user_metadata?.username || user.email?.split('@')[0] || 'user';
+          // Append first 4 chars of user id to avoid collisions
+          const uniqueUsername = `${baseUsername}_${user.id.substring(0, 4)}`.toLowerCase();
+
+          const { data: newProfile, error: insertError } = await supabase
+            .from('profiles')
+            .insert({
+              id: user.id,
+              username: uniqueUsername,
+              full_name: user.user_metadata?.full_name || null,
+              avatar_url: user.user_metadata?.avatar_url || null,
+              is_online: true
+            })
+            .select()
+            .single();
+
+          if (insertError) {
+            console.error('Failed to auto-create profile:', insertError);
+            return null;
+          }
+          return newProfile as Profile;
+        }
+      }
+
+      return data as Profile;
     } catch (err) {
       console.error('Fetch profile catch:', err);
       return null;

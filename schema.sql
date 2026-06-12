@@ -4,7 +4,7 @@
 -- ====================================================================
 
 -- 1. Create Profiles Table (extends Supabase auth.users)
-create table public.profiles (
+create table if not exists public.profiles (
   id uuid references auth.users on delete cascade primary key,
   username text unique not null,
   full_name text,
@@ -15,7 +15,7 @@ create table public.profiles (
 );
 
 -- 2. Create Conversations Table (Channels & DMs)
-create table public.conversations (
+create table if not exists public.conversations (
   id uuid default gen_random_uuid() primary key,
   name text, -- Name of the channel. NULL for Direct Messages (DMs)
   description text, -- NULL for DMs
@@ -27,7 +27,7 @@ create table public.conversations (
 );
 
 -- 3. Create Conversation Members Table (Who is in which Channel/DM)
-create table public.conversation_members (
+create table if not exists public.conversation_members (
   id uuid default gen_random_uuid() primary key,
   conversation_id uuid references public.conversations(id) on delete cascade not null,
   profile_id uuid references public.profiles(id) on delete cascade not null,
@@ -37,7 +37,7 @@ create table public.conversation_members (
 );
 
 -- 4. Create Messages Table (With thread support via parent_id)
-create table public.messages (
+create table if not exists public.messages (
   id uuid default gen_random_uuid() primary key,
   conversation_id uuid references public.conversations(id) on delete cascade not null,
   sender_id uuid references public.profiles(id) on delete cascade not null,
@@ -48,7 +48,7 @@ create table public.messages (
 );
 
 -- 5. Create Reactions Table
-create table public.reactions (
+create table if not exists public.reactions (
   id uuid default gen_random_uuid() primary key,
   message_id uuid references public.messages(id) on delete cascade not null,
   profile_id uuid references public.profiles(id) on delete cascade not null,
@@ -64,11 +64,24 @@ create table public.reactions (
 -- Automatically create a profile entry when a new auth user signs up
 create or replace function public.handle_new_user()
 returns trigger as $$
+declare
+  new_username text;
+  base_username text;
+  suffix int := 1;
 begin
+  base_username := coalesce(new.raw_user_meta_data->>'username', split_part(new.email, '@', 1));
+  new_username := base_username;
+  
+  -- Handle username uniqueness collisions
+  while exists (select 1 from public.profiles where username = new_username) loop
+    new_username := base_username || suffix::text;
+    suffix := suffix + 1;
+  end loop;
+
   insert into public.profiles (id, username, full_name, avatar_url, is_online)
   values (
     new.id,
-    coalesce(new.raw_user_meta_data->>'username', split_part(new.email, '@', 1)),
+    new_username,
     new.raw_user_meta_data->>'full_name',
     new.raw_user_meta_data->>'avatar_url',
     false
@@ -121,12 +134,21 @@ alter table public.reactions enable row level security;
 
 -- --- PROFILES POLICIES ---
 -- Anyone can view profiles (needed for displays, avatars, and DM initiation)
+drop policy if exists "Allow profile viewing for all logged in users" on public.profiles;
 create policy "Allow profile viewing for all logged in users"
   on public.profiles for select
   to authenticated
   using (true);
 
+-- Users can insert their own profiles (self-healing fallback)
+drop policy if exists "Allow profile insert for owners" on public.profiles;
+create policy "Allow profile insert for owners"
+  on public.profiles for insert
+  to authenticated
+  with check (auth.uid() = id);
+
 -- Users can update their own profiles
+drop policy if exists "Allow profile update for owners" on public.profiles;
 create policy "Allow profile update for owners"
   on public.profiles for update
   to authenticated
@@ -134,6 +156,7 @@ create policy "Allow profile update for owners"
 
 -- --- CONVERSATIONS POLICIES ---
 -- Users can select conversations they are a member of, or public channels (or if they are the creator)
+drop policy if exists "Allow conversations access for members or public channels" on public.conversations;
 create policy "Allow conversations access for members or public channels"
   on public.conversations for select
   to authenticated
@@ -144,6 +167,7 @@ create policy "Allow conversations access for members or public channels"
   );
 
 -- Users can create conversations
+drop policy if exists "Allow conversations creation for all users" on public.conversations;
 create policy "Allow conversations creation for all users"
   on public.conversations for insert
   to authenticated
@@ -151,6 +175,7 @@ create policy "Allow conversations creation for all users"
 
 -- --- CONVERSATION MEMBERS POLICIES ---
 -- Members can view memberships of their channels
+drop policy if exists "Allow member listing for joined conversations" on public.conversation_members;
 create policy "Allow member listing for joined conversations"
   on public.conversation_members for select
   to authenticated
@@ -164,6 +189,7 @@ create policy "Allow member listing for joined conversations"
   );
 
 -- Users can join public conversations or be added to private ones by admin/owner
+drop policy if exists "Allow membership joining" on public.conversation_members;
 create policy "Allow membership joining"
   on public.conversation_members for insert
   to authenticated
@@ -173,6 +199,7 @@ create policy "Allow membership joining"
   );
 
 -- Owners/Admins can change roles
+drop policy if exists "Allow member role updates" on public.conversation_members;
 create policy "Allow member role updates"
   on public.conversation_members for update
   to authenticated
@@ -181,6 +208,7 @@ create policy "Allow member role updates"
   );
 
 -- Users can leave or be kicked out by owners/admins
+drop policy if exists "Allow membership removal" on public.conversation_members;
 create policy "Allow membership removal"
   on public.conversation_members for delete
   to authenticated
@@ -191,6 +219,7 @@ create policy "Allow membership removal"
 
 -- --- MESSAGES POLICIES ---
 -- Members can read messages of conversations they belong to
+drop policy if exists "Allow reading messages if conversation member" on public.messages;
 create policy "Allow reading messages if conversation member"
   on public.messages for select
   to authenticated
@@ -203,6 +232,7 @@ create policy "Allow reading messages if conversation member"
   );
 
 -- Members can insert messages in conversations they belong to
+drop policy if exists "Allow sending messages if conversation member" on public.messages;
 create policy "Allow sending messages if conversation member"
   on public.messages for insert
   to authenticated
@@ -218,11 +248,13 @@ create policy "Allow sending messages if conversation member"
   );
 
 -- Users can update/delete their own messages
+drop policy if exists "Allow update for sender" on public.messages;
 create policy "Allow update for sender"
   on public.messages for update
   to authenticated
   using (sender_id = auth.uid());
 
+drop policy if exists "Allow delete for sender" on public.messages;
 create policy "Allow delete for sender"
   on public.messages for delete
   to authenticated
@@ -230,6 +262,7 @@ create policy "Allow delete for sender"
 
 -- --- REACTIONS POLICIES ---
 -- Users can view reactions on messages they have access to
+drop policy if exists "Allow select reactions" on public.reactions;
 create policy "Allow select reactions"
   on public.reactions for select
   to authenticated
@@ -241,6 +274,7 @@ create policy "Allow select reactions"
   );
 
 -- Users can add reactions to messages they can read
+drop policy if exists "Allow inserting reactions" on public.reactions;
 create policy "Allow inserting reactions"
   on public.reactions for insert
   to authenticated
