@@ -2,8 +2,6 @@ import express from 'express';
 import nodemailer from 'nodemailer';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import path from 'path';
-import { fileURLToPath } from 'url';
 import crypto from 'crypto';
 
 dotenv.config();
@@ -11,12 +9,6 @@ dotenv.config();
 const app = express();
 app.use(cors());
 app.use(express.json());
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-// Serve static assets from the frontend build directory (used for local testing)
-app.use(express.static(path.join(__dirname, '../dist')));
 
 const SECRET_KEY = process.env.VITE_SUPABASE_ANON_KEY || 'default-supabase-anon-key-fallback';
 
@@ -31,7 +23,7 @@ app.post('/api/send-otp', async (req, res) => {
   const smtpPass = process.env.SMTP_PASS;
 
   if (!smtpUser || !smtpPass || smtpUser === 'your-email@gmail.com' || smtpPass === 'your-app-password') {
-    console.error('SMTP credentials are not configured in your .env file!');
+    console.error('SMTP credentials are not configured!');
     return res.status(500).json({ 
       error: 'SMTP credentials are not configured on the server. Please update SMTP_USER and SMTP_PASS in your environment.' 
     });
@@ -45,11 +37,10 @@ app.post('/api/send-otp', async (req, res) => {
     const data = `${email.toLowerCase()}:${otp}:${expiresAt}`;
     const hash = crypto.createHmac('sha256', SECRET_KEY).update(data).digest('hex');
 
-    // Create transporter dynamically so if env variables are updated, it picks them up
     const transporter = nodemailer.createTransport({
       host: process.env.SMTP_HOST || 'smtp.gmail.com',
       port: parseInt(process.env.SMTP_PORT || '587', 10),
-      secure: process.env.SMTP_PORT === '465', // true for 465, false for other ports
+      secure: process.env.SMTP_PORT === '465',
       auth: {
         user: smtpUser,
         pass: smtpPass,
@@ -75,7 +66,6 @@ app.post('/api/send-otp', async (req, res) => {
     await transporter.sendMail(mailOptions);
     console.log(`Successfully sent OTP to ${email}`);
     
-    // Return signature hash and expiry back to client
     res.json({ success: true, hash, expiresAt });
   } catch (error) {
     console.error('Error sending email:', error);
@@ -89,12 +79,10 @@ app.post('/api/verify-otp', (req, res) => {
     return res.status(400).json({ error: 'Missing required verification fields' });
   }
 
-  // 1. Check expiration
   if (Date.now() > parseInt(expiresAt, 10)) {
     return res.status(400).json({ error: 'Verification code has expired' });
   }
 
-  // 2. Re-compute HMAC and compare
   const data = `${email.toLowerCase()}:${code.trim()}:${expiresAt}`;
   const computedHash = crypto.createHmac('sha256', SECRET_KEY).update(data).digest('hex');
 
@@ -103,11 +91,6 @@ app.post('/api/verify-otp', (req, res) => {
   }
 
   res.json({ success: true });
-});
-
-// Serve index.html for all other routes to support React Router client-side navigation (local test fallback)
-app.get('*', (req, res) => {
-  res.sendFile(path.join(__dirname, '../dist/index.html'));
 });
 
 // Only listen when running locally
