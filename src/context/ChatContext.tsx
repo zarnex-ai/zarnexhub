@@ -313,15 +313,41 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
       })
       // MEMBERS CHANGES
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'conversation_members' }, (payload) => {
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'conversation_members' }, async (payload) => {
         const { eventType, new: newRecord, old: oldRecord } = payload;
         if (eventType === 'INSERT') {
           setMembers(prev => {
             if (prev.some(m => m.id === newRecord.id)) return prev;
             return [...prev, newRecord as ConversationMember];
           });
+
+          // If current user was added as a member, fetch the full conversation details to render it
+          if (newRecord.profile_id === user?.id) {
+            const { data: conv, error } = await supabase
+              .from('conversations')
+              .select('*')
+              .eq('id', newRecord.conversation_id)
+              .maybeSingle();
+            if (conv && !error) {
+              setConversations(prev => {
+                if (prev.some(c => c.id === conv.id)) return prev;
+                return [...prev, conv];
+              });
+            }
+          }
         } else if (eventType === 'DELETE') {
+          const deletedMemberId = oldRecord?.id;
+          const removedMember = members.find(m => m.id === deletedMemberId);
+
           setMembers(prev => prev.filter(m => m.id !== oldRecord.id));
+
+          // If current user was removed as a member, clean up the sidebar and active states
+          if (removedMember && removedMember.profile_id === user?.id) {
+            setConversations(prev => prev.filter(c => c.id !== removedMember.conversation_id));
+            if (activeConvIdRef.current === removedMember.conversation_id) {
+              setActiveConversationId(null);
+            }
+          }
         }
       })
       // PROFILE STATUS CHANGES (real-time presence toggle or avatar change)

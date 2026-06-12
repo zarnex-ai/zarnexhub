@@ -146,13 +146,12 @@ create policy "Allow profile update for owners"
   using (auth.uid() = id);
 
 -- --- CONVERSATIONS POLICIES ---
--- Users can select conversations they are a member of, or public channels (or if they are the creator)
+-- Users can select conversations they are a member of, or if they are the creator
 drop policy if exists "Allow conversations access for members or public channels" on public.conversations;
 create policy "Allow conversations access for members or public channels"
   on public.conversations for select
   to authenticated
   using (
-    not is_private or
     created_by = auth.uid() or
     public.is_member_of_conversation(id, auth.uid())
   );
@@ -165,7 +164,7 @@ create policy "Allow conversations creation for all users"
   with check (auth.uid() = created_by);
 
 -- --- CONVERSATION MEMBERS POLICIES ---
--- Members can view memberships of their channels
+-- Members or conversation creators can view memberships
 drop policy if exists "Allow member listing for joined conversations" on public.conversation_members;
 create policy "Allow member listing for joined conversations"
   on public.conversation_members for select
@@ -175,23 +174,22 @@ create policy "Allow member listing for joined conversations"
     or exists (
       select 1 from public.conversations
       where conversations.id = conversation_members.conversation_id
-      and not conversations.is_private
+      and conversations.created_by = auth.uid()
     )
   );
 
--- Users can join public conversations or be added to private ones by admin/owner
+-- Users can join if they are the creator, or be added by admin/owner
 drop policy if exists "Allow membership joining" on public.conversation_members;
 create policy "Allow membership joining"
   on public.conversation_members for insert
   to authenticated
   with check (
-    profile_id = auth.uid() or
-    public.is_admin_or_owner(conversation_id, auth.uid()) or
-    exists (
+    (profile_id = auth.uid() and exists (
       select 1 from public.conversations
       where id = conversation_id
       and created_by = auth.uid()
-    )
+    )) or
+    public.is_admin_or_owner(conversation_id, auth.uid())
   );
 
 -- Owners/Admins can change roles

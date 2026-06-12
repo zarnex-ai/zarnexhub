@@ -12,7 +12,7 @@ export const CreateChannelModal: React.FC<ModalProps> = ({ onClose }) => {
   const { createChannel, conversations } = useChat();
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
-  const [isPrivate, setIsPrivate] = useState(false);
+  const [isPrivate, setIsPrivate] = useState(true);
   const [parentId, setParentId] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
