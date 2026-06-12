@@ -22,6 +22,7 @@ create table public.conversations (
   is_dm boolean default false not null,
   is_private boolean default false not null,
   created_by uuid references public.profiles(id) on delete set null,
+  parent_id uuid references public.conversations(id) on delete cascade, -- Self-referencing FK for sub-channels
   created_at timestamp with time zone default timezone('utc'::text, now()) not null
 );
 
@@ -132,12 +133,13 @@ create policy "Allow profile update for owners"
   using (auth.uid() = id);
 
 -- --- CONVERSATIONS POLICIES ---
--- Users can select conversations they are a member of, or public channels
+-- Users can select conversations they are a member of, or public channels (or if they are the creator)
 create policy "Allow conversations access for members or public channels"
   on public.conversations for select
   to authenticated
   using (
     not is_private or
+    created_by = auth.uid() or
     public.is_member_of_conversation(id, auth.uid())
   );
 

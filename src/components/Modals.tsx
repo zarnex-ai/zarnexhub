@@ -9,12 +9,16 @@ interface ModalProps {
 }
 
 export const CreateChannelModal: React.FC<ModalProps> = ({ onClose }) => {
-  const { createChannel } = useChat();
+  const { createChannel, conversations } = useChat();
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [isPrivate, setIsPrivate] = useState(false);
+  const [parentId, setParentId] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Filter top-level channels (no DMs and no sub-channels)
+  const parentChannels = conversations.filter(c => !c.is_dm && !c.parent_id);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -22,10 +26,10 @@ export const CreateChannelModal: React.FC<ModalProps> = ({ onClose }) => {
     setLoading(true);
     setError(null);
     try {
-      await createChannel(name, description, isPrivate);
+      await createChannel(name, description, isPrivate, parentId || null);
       onClose();
-    } catch (err: any) {
-      setError(err.message || 'Failed to create channel');
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to create channel');
     } finally {
       setLoading(false);
     }
@@ -74,6 +78,23 @@ export const CreateChannelModal: React.FC<ModalProps> = ({ onClose }) => {
               value={description}
               onChange={(e) => setDescription(e.target.value)}
             />
+          </div>
+
+          <div className="form-group">
+            <label className="form-label">Parent Channel <span style={{ color: 'var(--text-muted)', textTransform: 'none' }}>(optional)</span></label>
+            <select
+              className="form-input"
+              value={parentId}
+              onChange={(e) => setParentId(e.target.value)}
+              style={{ background: 'var(--bg-panel)', border: '1px solid var(--border-subtle)', color: 'var(--text-primary)' }}
+            >
+              <option value="">None (Create as top-level channel)</option>
+              {parentChannels.map((parent) => (
+                <option key={parent.id} value={parent.id}>
+                  #{parent.name}
+                </option>
+              ))}
+            </select>
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '0.5rem' }}>

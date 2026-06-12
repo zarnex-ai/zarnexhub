@@ -11,6 +11,7 @@ export interface Conversation {
   is_dm: boolean;
   is_private: boolean;
   created_by: string | null;
+  parent_id?: string | null;
   created_at: string;
 }
 
@@ -55,7 +56,7 @@ interface ChatContextType {
   loadingMessages: boolean;
   setActiveConversationId: (id: string | null) => void;
   setThreadParent: (message: Message | null) => void;
-  createChannel: (name: string, description: string, isPrivate: boolean) => Promise<Conversation>;
+  createChannel: (name: string, description: string, isPrivate: boolean, parentId?: string | null) => Promise<Conversation>;
   startDM: (targetProfileId: string) => Promise<Conversation>;
   sendMessage: (content: string, parentId?: string | null) => Promise<Message>;
   editMessage: (messageId: string, content: string) => Promise<void>;
@@ -390,7 +391,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [user]);
 
   // Operations
-  const createChannel = async (name: string, description: string, isPrivate: boolean): Promise<Conversation> => {
+  const createChannel = async (name: string, description: string, isPrivate: boolean, parentId: string | null = null): Promise<Conversation> => {
     if (!user) throw new Error('Not authenticated');
 
     const cleanName = name.toLowerCase().replace(/\s+/g, '-');
@@ -415,7 +416,8 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         description,
         is_dm: false,
         is_private: isPrivate,
-        created_by: user.id
+        created_by: user.id,
+        parent_id: parentId
       })
       .select()
       .single();

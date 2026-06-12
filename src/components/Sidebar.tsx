@@ -34,6 +34,10 @@ export const Sidebar: React.FC = () => {
   const channels = conversations.filter(c => !c.is_dm);
   const dms = conversations.filter(c => c.is_dm);
 
+  // Group channels into parents and subchannels
+  const parentChannels = channels.filter(c => !c.parent_id);
+  const subChannels = channels.filter(c => c.parent_id);
+
   // Helper to extract DM conversation visual details (recipient username, avatar, online status)
   const getDMDetails = (convId: string) => {
     const convMembers = members.filter(m => m.conversation_id === convId);
@@ -90,19 +94,39 @@ export const Sidebar: React.FC = () => {
 
             {!channelsCollapsed && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                {channels.map((chan) => (
-                  <div
-                    key={chan.id}
-                    className={`sidebar-item ${activeConversation?.id === chan.id ? 'active' : ''}`}
-                    onClick={() => setActiveConversationId(chan.id)}
-                  >
-                    <div className="sidebar-item-label">
-                      <Hash size={16} style={{ color: activeConversation?.id === chan.id ? 'var(--text-primary)' : 'var(--text-muted)' }} />
-                      <span>{chan.name}</span>
-                    </div>
-                    {chan.is_private && <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>🔒</span>}
-                  </div>
-                ))}
+                {parentChannels.map((parent) => {
+                  const children = subChannels.filter(child => child.parent_id === parent.id);
+                  return (
+                    <React.Fragment key={parent.id}>
+                      <div
+                        className={`sidebar-item ${activeConversation?.id === parent.id ? 'active' : ''}`}
+                        onClick={() => setActiveConversationId(parent.id)}
+                      >
+                        <div className="sidebar-item-label">
+                          <Hash size={16} style={{ color: activeConversation?.id === parent.id ? 'var(--text-primary)' : 'var(--text-muted)' }} />
+                          <span style={{ fontWeight: children.length > 0 ? 600 : 400 }}>{parent.name}</span>
+                        </div>
+                        {parent.is_private && <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>🔒</span>}
+                      </div>
+
+                      {children.map((child) => (
+                        <div
+                          key={child.id}
+                          className={`sidebar-item ${activeConversation?.id === child.id ? 'active' : ''}`}
+                          style={{ paddingLeft: '1.75rem' }}
+                          onClick={() => setActiveConversationId(child.id)}
+                        >
+                          <div className="sidebar-item-label">
+                            <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginRight: '2px', opacity: 0.6 }}>↳</span>
+                            <Hash size={14} style={{ color: activeConversation?.id === child.id ? 'var(--text-primary)' : 'var(--text-muted)' }} />
+                            <span style={{ fontSize: '0.85rem', color: activeConversation?.id === child.id ? 'var(--text-primary)' : 'var(--text-secondary)' }}>{child.name}</span>
+                          </div>
+                          {child.is_private && <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>🔒</span>}
+                        </div>
+                      ))}
+                    </React.Fragment>
+                  );
+                })}
               </div>
             )}
           </div>
