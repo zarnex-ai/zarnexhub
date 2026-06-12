@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useChat } from '../context/ChatContext';
 import { useAuth } from '../context/AuthContext';
 import { 
@@ -8,9 +8,10 @@ import {
   Settings, 
   ChevronDown, 
   ChevronRight, 
-  Users
+  Users,
+  Search
 } from 'lucide-react';
-import { CreateChannelModal, StartDMModal, ProfileModal } from './Modals';
+import { CreateChannelModal, StartDMModal, ProfileModal, SearchConversationsModal } from './Modals';
 
 export const Sidebar: React.FC = () => {
   const { 
@@ -26,9 +27,22 @@ export const Sidebar: React.FC = () => {
   const [showChannelModal, setShowChannelModal] = useState(false);
   const [showDMModal, setShowDMModal] = useState(false);
   const [showProfileModal, setShowProfileModal] = useState(false);
+  const [showSearchModal, setShowSearchModal] = useState(false);
 
   const [channelsCollapsed, setChannelsCollapsed] = useState(false);
   const [dmsCollapsed, setDmsCollapsed] = useState(false);
+
+  // Hotkey listener for Ctrl+K / Cmd+K search dialog
+  useEffect(() => {
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setShowSearchModal(prev => !prev);
+      }
+    };
+    window.addEventListener('keydown', handleGlobalKeyDown);
+    return () => window.removeEventListener('keydown', handleGlobalKeyDown);
+  }, []);
 
   // Filter conversations
   const channels = conversations.filter(c => !c.is_dm);
@@ -72,6 +86,44 @@ export const Sidebar: React.FC = () => {
           </div>
           <button onClick={() => setShowProfileModal(true)} title="Edit profile settings">
             <Settings size={18} className="logout-btn" />
+          </button>
+        </div>
+
+        {/* Global Search Button */}
+        <div style={{ padding: '0.75rem 1rem', borderBottom: '1px solid var(--border-subtle)' }}>
+          <button 
+            onClick={() => setShowSearchModal(true)}
+            style={{
+              width: '100%',
+              padding: '0.5rem 0.75rem',
+              borderRadius: 'var(--radius-md)',
+              border: '1px solid var(--border-subtle)',
+              background: 'var(--bg-input)',
+              color: 'var(--text-muted)',
+              fontSize: '0.825rem',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              cursor: 'pointer',
+              textAlign: 'left',
+              transition: 'var(--transition-fast)'
+            }}
+            className="search-conversations-btn"
+            title="Search conversations (Ctrl+K)"
+          >
+            <Search size={14} />
+            <span>Search conversations...</span>
+            <span style={{ 
+              marginLeft: 'auto', 
+              opacity: 0.5, 
+              fontSize: '0.7rem', 
+              background: 'rgba(255,255,255,0.08)', 
+              padding: '1px 6px', 
+              borderRadius: '3px',
+              border: '1px solid rgba(255,255,255,0.05)'
+            }}>
+              Ctrl+K
+            </span>
           </button>
         </div>
 
@@ -224,6 +276,7 @@ export const Sidebar: React.FC = () => {
       {showChannelModal && <CreateChannelModal onClose={() => setShowChannelModal(false)} />}
       {showDMModal && <StartDMModal onClose={() => setShowDMModal(false)} />}
       {showProfileModal && <ProfileModal onClose={() => setShowProfileModal(false)} />}
+      {showSearchModal && <SearchConversationsModal onClose={() => setShowSearchModal(false)} />}
     </>
   );
 };

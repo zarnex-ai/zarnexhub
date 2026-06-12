@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useChat } from '../context/ChatContext';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
@@ -801,6 +801,189 @@ export const ManageMembersModal: React.FC<ManageMembersModalProps> = ({ conversa
                   </div>
                 );
               })}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export const SearchConversationsModal: React.FC<ModalProps> = ({ onClose }) => {
+  const { conversations, members, profiles, setActiveConversationId } = useChat();
+  const { user, profile } = useAuth();
+  const [search, setSearch] = useState('');
+  const [selectedIndex, setSelectedIndex] = useState(0);
+
+  // Helper to get DM details
+  const getDMDetails = (convId: string) => {
+    const convMembers = members.filter(m => m.conversation_id === convId);
+    const otherMember = convMembers.find(m => m.profile_id !== user?.id);
+    
+    if (!otherMember) {
+      return {
+        name: `${profile?.full_name || profile?.username || 'You'} (you)`,
+        avatarUrl: profile?.avatar_url,
+        isOnline: true
+      };
+    }
+
+    const otherProfile = profiles.find(p => p.id === otherMember.profile_id);
+    return {
+      name: otherProfile ? (otherProfile.full_name || otherProfile.username) : 'Direct Message',
+      avatarUrl: otherProfile?.avatar_url,
+      isOnline: otherProfile?.is_online || false
+    };
+  };
+
+  // Map conversations to list items with search name
+  const items = conversations.map(c => {
+    if (c.is_dm) {
+      const details = getDMDetails(c.id);
+      return {
+        id: c.id,
+        name: details.name,
+        isDm: true,
+        isPrivate: true,
+        avatarUrl: details.avatarUrl,
+        isOnline: details.isOnline
+      };
+    } else {
+      return {
+        id: c.id,
+        name: `#${c.name || 'channel'}`,
+        isDm: false,
+        isPrivate: c.is_private,
+        avatarUrl: null,
+        isOnline: false
+      };
+    }
+  });
+
+  // Filter items
+  const filtered = items.filter(item => 
+    item.name.toLowerCase().includes(search.toLowerCase())
+  );
+
+  // Keyboard navigation
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setSelectedIndex(prev => (prev + 1) % Math.max(1, filtered.length));
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setSelectedIndex(prev => (prev - 1 + filtered.length) % Math.max(1, filtered.length));
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        if (filtered[selectedIndex]) {
+          setActiveConversationId(filtered[selectedIndex].id);
+          onClose();
+        }
+      } else if (e.key === 'Escape') {
+        onClose();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [filtered, selectedIndex]);
+
+  // Reset selected index when search changes
+  useEffect(() => {
+    setSelectedIndex(0);
+  }, [search]);
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div 
+        className="modal-content animate-fade-in" 
+        style={{ maxWidth: '500px', padding: '1.25rem' }} 
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="modal-header" style={{ marginBottom: '0.75rem' }}>
+          <h2 className="modal-title" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <Search size={20} style={{ color: 'var(--accent-hover)' }} />
+            <span>Search Conversations</span>
+          </h2>
+          <button className="modal-close-btn" onClick={onClose}>
+            <X size={20} />
+          </button>
+        </div>
+
+        <div className="modal-body" style={{ gap: '0.75rem' }}>
+          <div className="search-container" style={{ width: '100%' }}>
+            <Search size={16} className="search-icon" />
+            <input
+              type="text"
+              className="search-input"
+              style={{ paddingLeft: '2.25rem', width: '100%', fontSize: '0.9rem' }}
+              placeholder="Search by channel name or person..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              autoFocus
+            />
+          </div>
+
+          <div style={{ marginTop: '0.5rem' }}>
+            <div className="form-label" style={{ marginBottom: '0.4rem' }}>Conversations ({filtered.length})</div>
+            <div className="user-select-list" style={{ maxHeight: '280px' }}>
+              {filtered.length === 0 ? (
+                <div style={{ padding: '1.5rem', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.875rem' }}>
+                  No channels or direct messages match your search.
+                </div>
+              ) : (
+                filtered.map((item, index) => (
+                  <div
+                    key={item.id}
+                    className={`user-select-item ${index === selectedIndex ? 'active' : ''}`}
+                    style={{ 
+                      padding: '0.6rem 0.875rem', 
+                      background: index === selectedIndex ? 'rgba(255, 255, 255, 0.05)' : 'transparent',
+                      borderLeft: index === selectedIndex ? '3px solid var(--accent-hover)' : '3px solid transparent'
+                    }}
+                    onClick={() => {
+                      setActiveConversationId(item.id);
+                      onClose();
+                    }}
+                    onMouseEnter={() => setSelectedIndex(index)}
+                  >
+                    <div className="user-select-info" style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                      {item.isDm ? (
+                        <div className="avatar-wrapper">
+                          <div className="avatar avatar-sm">
+                            {item.avatarUrl ? (
+                              <img src={item.avatarUrl} alt="" style={{ width: '100%', height: '100%', borderRadius: 'inherit', objectFit: 'cover' }} />
+                            ) : (
+                              item.name.substring(0, 2).toUpperCase()
+                            )}
+                          </div>
+                          <span className={`status-dot ${item.isOnline ? 'online' : 'offline'}`} style={{ width: '8px', height: '8px', border: '2px solid var(--bg-panel)', position: 'static' }}></span>
+                        </div>
+                      ) : (
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '32px', height: '32px', background: 'rgba(255, 255, 255, 0.03)', borderRadius: '6px' }}>
+                          <span style={{ fontSize: '1rem', color: 'var(--text-muted)' }}>
+                            {item.isPrivate ? '🔒' : '#'}
+                          </span>
+                        </div>
+                      )}
+                      
+                      <div>
+                        <span style={{ fontSize: '0.9rem', fontWeight: 500, color: index === selectedIndex ? 'var(--text-primary)' : 'var(--text-secondary)' }}>
+                          {item.name}
+                        </span>
+                        <span style={{ marginLeft: '8px', fontSize: '0.725rem', color: 'var(--text-muted)', opacity: 0.7 }}>
+                          {item.isDm ? 'Direct Message' : item.isPrivate ? 'Private Channel' : 'Public Channel'}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', opacity: index === selectedIndex ? 1 : 0.4 }}>
+                      ↵ Jump
+                    </div>
+                  </div>
+                ))
+              )}
             </div>
           </div>
         </div>
