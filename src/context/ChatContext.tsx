@@ -589,6 +589,10 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const addConversationMember = async (conversationId: string, profileId: string, role: string = 'member'): Promise<void> => {
+    // 1. Guard against local duplicate addition attempts
+    const isAlreadyMember = members.some(m => m.conversation_id === conversationId && m.profile_id === profileId);
+    if (isAlreadyMember) return;
+
     const { error } = await supabase
       .from('conversation_members')
       .insert({
@@ -596,7 +600,14 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         profile_id: profileId,
         role
       });
-    if (error) throw error;
+      
+    if (error) {
+      // Postgres unique constraint violation code
+      if (error.code === '23505') {
+        return; 
+      }
+      throw error;
+    }
   };
 
   const updateConversationMemberRole = async (conversationId: string, profileId: string, role: string): Promise<void> => {

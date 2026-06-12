@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useChat } from '../context/ChatContext';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
@@ -575,6 +575,7 @@ export const ManageMembersModal: React.FC<ManageMembersModalProps> = ({ conversa
   const [error, setError] = useState<string | null>(null);
 
   const activeChannel = conversations.find(c => c.id === conversationId);
+  const addingRef = useRef<Set<string>>(new Set());
   
   // 1. Get all members of this conversation
   const channelMembers = members.filter(m => m.conversation_id === conversationId);
@@ -598,6 +599,9 @@ export const ManageMembersModal: React.FC<ManageMembersModalProps> = ({ conversa
   });
 
   const handleAddMember = async (profileId: string) => {
+    if (addingRef.current.has(profileId)) return;
+    addingRef.current.add(profileId);
+
     setLoadingAction(`add-${profileId}`);
     setError(null);
     try {
@@ -605,6 +609,7 @@ export const ManageMembersModal: React.FC<ManageMembersModalProps> = ({ conversa
     } catch (err: any) {
       setError(err.message || 'Failed to add user to channel');
     } finally {
+      addingRef.current.delete(profileId);
       setLoadingAction(null);
     }
   };
