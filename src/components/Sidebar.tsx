@@ -10,9 +10,14 @@ import {
   ChevronRight, 
   Users,
   Search,
-  Trash2
+  Trash2,
+  MessageSquare,
+  Volume2,
+  VolumeX,
+  Palette
 } from 'lucide-react';
 import { CreateChannelModal, StartDMModal, ProfileModal, SearchConversationsModal } from './Modals';
+import { soundFx } from '../lib/soundFx';
 
 export const Sidebar: React.FC = () => {
   const { 
@@ -34,6 +39,10 @@ export const Sidebar: React.FC = () => {
   const [channelsCollapsed, setChannelsCollapsed] = useState(false);
   const [dmsCollapsed, setDmsCollapsed] = useState(false);
 
+  const [isMuted, setIsMuted] = useState(() => soundFx.getMutedState());
+  const [showThemePicker, setShowThemePicker] = useState(false);
+  const [activeTheme, setActiveTheme] = useState(() => (window as any).getHUDTheme() || 'cosmic');
+
   // Hotkey listener for Ctrl+K / Cmd+K search dialog
   useEffect(() => {
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
@@ -46,7 +55,22 @@ export const Sidebar: React.FC = () => {
     return () => window.removeEventListener('keydown', handleGlobalKeyDown);
   }, []);
 
+  // Sync theme changes with global state
+  const handleToggleMute = () => {
+    const nextMuted = soundFx.toggleMute();
+    setIsMuted(nextMuted);
+  };
+
+  const handleSelectTheme = (themeName: string) => {
+    if ((window as any).setHUDTheme) {
+      (window as any).setHUDTheme(themeName);
+      setActiveTheme(themeName);
+    }
+    setShowThemePicker(false);
+  };
+
   const handleDeleteConversation = async (id: string, name: string) => {
+    soundFx.playWarning();
     if (window.confirm(`Are you sure you want to delete "${name}"? This will permanently delete all chat history in Supabase.`)) {
       try {
         await deleteConversation(id);
@@ -65,7 +89,7 @@ export const Sidebar: React.FC = () => {
   const parentChannels = channels.filter(c => !c.parent_id);
   const subChannels = channels.filter(c => c.parent_id);
 
-  // Helper to extract DM conversation visual details (recipient username, avatar, online status)
+  // Helper to extract DM conversation visual details
   const getDMDetails = (convId: string) => {
     const convMembers = members.filter(m => m.conversation_id === convId);
     const otherMember = convMembers.find(m => m.profile_id !== user?.id);
@@ -88,56 +112,160 @@ export const Sidebar: React.FC = () => {
     };
   };
 
+
   return (
     <>
-      <aside className="sidebar">
-        {/* Sidebar Header */}
-        <div className="sidebar-header">
-          <div className="workspace-name">
-            <Users size={18} className="pulse" style={{ color: 'var(--accent-hover)' }} />
-            <span>ZarnexHub</span>
-          </div>
-          <button onClick={() => setShowProfileModal(true)} title="Edit profile settings">
-            <Settings size={18} className="logout-btn" />
+      {/* Floating Bottom command center Console Dock (mockup inspired) */}
+      <div className="bottom-command-dock">
+        <button 
+          className="dock-btn active" 
+          title="Chat Console"
+          onMouseEnter={() => soundFx.playHover()}
+          onClick={() => soundFx.playClick()}
+        >
+          <MessageSquare size={18} />
+        </button>
+        <button 
+          className="dock-btn" 
+          title="Search Workspace (Ctrl+K)"
+          onMouseEnter={() => soundFx.playHover()}
+          onClick={() => {
+            soundFx.playClick();
+            setShowSearchModal(true);
+          }}
+        >
+          <Search size={18} />
+        </button>
+        <button 
+          className="dock-btn" 
+          title="Start DM Conversation"
+          onMouseEnter={() => soundFx.playHover()}
+          onClick={() => {
+            soundFx.playClick();
+            setShowDMModal(true);
+          }}
+        >
+          <Users size={18} />
+        </button>
+        
+        {/* Synth Audio Mute Selector */}
+        <button 
+          className={`dock-btn ${isMuted ? '' : 'active'}`}
+          style={{ background: isMuted ? 'rgba(255,255,255,0.02)' : 'rgba(217,70,239,0.1)' }}
+          title={isMuted ? "Unmute HUD Synthesizer" : "Mute HUD Synthesizer"}
+          onMouseEnter={() => soundFx.playHover()}
+          onClick={handleToggleMute}
+        >
+          {isMuted ? <VolumeX size={18} /> : <Volume2 size={18} />}
+        </button>
+
+        {/* Dynamic Palette Theme Swapper */}
+        <div style={{ position: 'relative' }}>
+          <button 
+            className="dock-btn" 
+            title="Configure System Theme"
+            onMouseEnter={() => soundFx.playHover()}
+            onClick={() => {
+              soundFx.playClick();
+              setShowThemePicker(!showThemePicker);
+            }}
+          >
+            <Palette size={18} />
           </button>
+          
+          {showThemePicker && (
+            <div className="theme-selector-popover">
+              <div style={{ fontSize: '0.65rem', fontWeight: 800, color: 'var(--text-muted)', padding: '2px 4px 6px 4px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Visual Accents</div>
+              {[
+                { name: 'cosmic', label: 'Cosmic Nebula', color: '#d946ef' },
+                { name: 'solar', label: 'Solar Eclipse', color: '#f97316' },
+                { name: 'matrix', label: 'Matrix Green', color: '#10b981' },
+                { name: 'hyperdrive', label: 'Hyperdrive Blue', color: '#00e5ff' },
+                { name: 'abyssal', label: 'Abyssal Red', color: '#ef4444' }
+              ].map((themeOpt) => (
+                <div 
+                  key={themeOpt.name}
+                  className={`theme-opt ${activeTheme === themeOpt.name ? 'active' : ''}`}
+                  onClick={() => handleSelectTheme(themeOpt.name)}
+                >
+                  <span className="theme-color-dot" style={{ backgroundColor: themeOpt.color }}></span>
+                  <span>{themeOpt.label}</span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
-        {/* Global Search Button */}
-        <div style={{ padding: '0.75rem 1rem', borderBottom: '1px solid var(--border-subtle)' }}>
-          <button 
-            onClick={() => setShowSearchModal(true)}
-            style={{
-              width: '100%',
-              padding: '0.5rem 0.75rem',
-              borderRadius: 'var(--radius-md)',
-              border: '1px solid var(--border-subtle)',
-              background: 'var(--bg-input)',
-              color: 'var(--text-muted)',
-              fontSize: '0.825rem',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
-              cursor: 'pointer',
-              textAlign: 'left',
-              transition: 'var(--transition-fast)'
+        <button 
+          className="dock-btn" 
+          title="Account profile"
+          onMouseEnter={() => soundFx.playHover()}
+          onClick={() => {
+            soundFx.playClick();
+            setShowProfileModal(true);
+          }}
+        >
+          <Settings size={18} />
+        </button>
+
+        {user && (
+          <div 
+            className="dock-btn"
+            style={{ padding: 0, overflow: 'hidden', cursor: 'pointer' }}
+            title={`${profile?.full_name || profile?.username || 'User'} Profile Settings`}
+            onClick={() => {
+              soundFx.playClick();
+              setShowProfileModal(true);
             }}
-            className="search-conversations-btn"
-            title="Search conversations (Ctrl+K)"
           >
-            <Search size={14} />
-            <span>Search conversations...</span>
-            <span style={{ 
-              marginLeft: 'auto', 
-              opacity: 0.5, 
-              fontSize: '0.7rem', 
-              background: 'rgba(255,255,255,0.08)', 
-              padding: '1px 6px', 
-              borderRadius: '3px',
-              border: '1px solid rgba(255,255,255,0.05)'
-            }}>
-              Ctrl+K
-            </span>
-          </button>
+            {profile?.avatar_url ? (
+              <img src={profile.avatar_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+            ) : (
+              <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.75rem', fontWeight: 'bold', background: 'var(--accent-gradient)' }}>
+                {(profile?.username || user.email || 'U').substring(0, 1).toUpperCase()}
+              </div>
+            )}
+          </div>
+        )}
+
+        <button 
+          className="dock-btn" 
+          title="Command Shutdown (Sign Out)"
+          onMouseEnter={() => soundFx.playHover()}
+          onClick={() => {
+            soundFx.playClick();
+            signOut();
+          }}
+        >
+          <LogOut size={18} style={{ color: '#ef4444' }} />
+        </button>
+      </div>
+
+      <aside className="sidebar">
+        {/* Sidebar Header with Overlapping member avatars cluster from mockup */}
+        <div className="sidebar-header">
+          <div className="workspace-name" style={{ flex: 1, minWidth: 0 }}>
+            <Users size={16} className="pulse" style={{ color: 'var(--accent-hover)', flexShrink: 0 }} />
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>ZarnexHub</span>
+          </div>
+          
+          {user && (
+            <div 
+              className="avatar" 
+              style={{ width: '28px', height: '28px', cursor: 'pointer', borderRadius: 'var(--radius-sm)', fontSize: '0.8rem' }}
+              onClick={() => {
+                soundFx.playClick();
+                setShowProfileModal(true);
+              }}
+              title={`${profile?.full_name || 'User'} Profile`}
+            >
+              {profile?.avatar_url ? (
+                <img src={profile.avatar_url} alt="" style={{ width: '100%', height: '100%', borderRadius: 'inherit', objectFit: 'cover' }} />
+              ) : (
+                (profile?.username || user.email || 'U').substring(0, 2).toUpperCase()
+              )}
+            </div>
+          )}
         </div>
 
         {/* Channels & DMs Scroll Workspace */}
@@ -147,12 +275,21 @@ export const Sidebar: React.FC = () => {
             <div className="sidebar-section-header">
               <button 
                 style={{ display: 'flex', alignItems: 'center', gap: '4px' }}
-                onClick={() => setChannelsCollapsed(!channelsCollapsed)}
+                onClick={() => {
+                  soundFx.playClick();
+                  setChannelsCollapsed(!channelsCollapsed);
+                }}
               >
                 {channelsCollapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
                 <span>Channels ({channels.length})</span>
               </button>
-              <button onClick={() => setShowChannelModal(true)} title="Create a channel">
+              <button 
+                onClick={() => {
+                  soundFx.playClick();
+                  setShowChannelModal(true);
+                }} 
+                title="Create a channel"
+              >
                 <Plus size={14} />
               </button>
             </div>
@@ -165,7 +302,12 @@ export const Sidebar: React.FC = () => {
                     <React.Fragment key={parent.id}>
                       <div
                         className={`sidebar-item ${activeConversation?.id === parent.id ? 'active' : ''}`}
-                        onClick={() => setActiveConversationId(parent.id)}
+                        onMouseEnter={() => soundFx.playHover()}
+                        onClick={() => {
+                          soundFx.playClick();
+                          if ((window as any).triggerHyperdrive) (window as any).triggerHyperdrive();
+                          setActiveConversationId(parent.id);
+                        }}
                       >
                         <div className="sidebar-item-label">
                           <Hash size={16} style={{ color: activeConversation?.id === parent.id ? 'var(--text-primary)' : 'var(--text-muted)' }} />
@@ -193,7 +335,12 @@ export const Sidebar: React.FC = () => {
                           key={child.id}
                           className={`sidebar-item ${activeConversation?.id === child.id ? 'active' : ''}`}
                           style={{ paddingLeft: '1.75rem' }}
-                          onClick={() => setActiveConversationId(child.id)}
+                          onMouseEnter={() => soundFx.playHover()}
+                          onClick={() => {
+                            soundFx.playClick();
+                            if ((window as any).triggerHyperdrive) (window as any).triggerHyperdrive();
+                            setActiveConversationId(child.id);
+                          }}
                         >
                           <div className="sidebar-item-label">
                             <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginRight: '2px', opacity: 0.6 }}>↳</span>
@@ -229,12 +376,21 @@ export const Sidebar: React.FC = () => {
             <div className="sidebar-section-header">
               <button 
                 style={{ display: 'flex', alignItems: 'center', gap: '4px' }}
-                onClick={() => setDmsCollapsed(!dmsCollapsed)}
+                onClick={() => {
+                  soundFx.playClick();
+                  setDmsCollapsed(!dmsCollapsed);
+                }}
               >
                 {dmsCollapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
                 <span>Direct Messages ({dms.length})</span>
               </button>
-              <button onClick={() => setShowDMModal(true)} title="Start new direct message">
+              <button 
+                onClick={() => {
+                  soundFx.playClick();
+                  setShowDMModal(true);
+                }} 
+                title="Start new direct message"
+              >
                 <Plus size={14} />
               </button>
             </div>
@@ -247,7 +403,12 @@ export const Sidebar: React.FC = () => {
                     <div
                       key={dm.id}
                       className={`sidebar-item ${activeConversation?.id === dm.id ? 'active' : ''}`}
-                      onClick={() => setActiveConversationId(dm.id)}
+                      onMouseEnter={() => soundFx.playHover()}
+                      onClick={() => {
+                        soundFx.playClick();
+                        if ((window as any).triggerHyperdrive) (window as any).triggerHyperdrive();
+                        setActiveConversationId(dm.id);
+                      }}
                     >
                       <div className="sidebar-item-label">
                         <div className="avatar-wrapper">
@@ -260,7 +421,7 @@ export const Sidebar: React.FC = () => {
                           </div>
                           <span className={`status-dot ${details.isOnline ? 'online' : 'offline'}`}></span>
                         </div>
-                        <span style={{ textDecoration: dm.id === activeConversation?.id ? 'none' : 'none' }}>
+                        <span>
                           {details.name}
                         </span>
                       </div>
@@ -295,7 +456,7 @@ export const Sidebar: React.FC = () => {
         {/* Footer Profile Section */}
         {user && (
           <div className="sidebar-footer">
-            <div className="user-summary" onClick={() => setShowProfileModal(true)}>
+            <div className="user-summary" onClick={() => { soundFx.playClick(); setShowProfileModal(true); }}>
               <div className="avatar-wrapper">
                 <div className="avatar">
                   {profile?.avatar_url ? (
@@ -318,9 +479,6 @@ export const Sidebar: React.FC = () => {
                 <span className="user-status-text">{profile?.status_text || 'Active'}</span>
               </div>
             </div>
-            <button className="logout-btn" onClick={signOut} title="Sign Out">
-              <LogOut size={18} />
-            </button>
           </div>
         )}
       </aside>

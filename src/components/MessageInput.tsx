@@ -2,6 +2,8 @@ import React, { useState, useRef, useEffect } from 'react';
 import { useChat } from '../context/ChatContext';
 import { Send, Paperclip, Smile } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import { soundFx } from '../lib/soundFx';
+
 
 interface MessageInputProps {
   parentId?: string | null;
@@ -39,6 +41,14 @@ export const MessageInput: React.FC<MessageInputProps> = ({ parentId = null, pla
   const handleSend = async () => {
     if (!content.trim() || isSending) return;
     setIsSending(true);
+    
+    // Play sci-fi transmission send whoosh
+    soundFx.playSend();
+    // Trigger telemetry spike
+    if ((window as any).triggerTelemetrySpike) {
+      (window as any).triggerTelemetrySpike();
+    }
+
     try {
       await sendMessage(content.trim(), parentId);
       setContent('');
@@ -66,6 +76,7 @@ export const MessageInput: React.FC<MessageInputProps> = ({ parentId = null, pla
     if (textareaRef.current) {
       textareaRef.current.focus();
     }
+    soundFx.playClick();
   };
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -79,6 +90,7 @@ export const MessageInput: React.FC<MessageInputProps> = ({ parentId = null, pla
     }
 
     setUploadingFile(true);
+    soundFx.playScan(0.8);
     try {
       const fileExt = file.name.split('.').pop();
       const cleanFileName = file.name.replace(/[^a-zA-Z0-9]/g, '_');
@@ -104,9 +116,11 @@ export const MessageInput: React.FC<MessageInputProps> = ({ parentId = null, pla
       if (textareaRef.current) {
         textareaRef.current.focus();
       }
+      soundFx.playReceive();
     } catch (err: any) {
       console.error('Upload error:', err);
       alert(err.message || 'Failed to upload attachment');
+      soundFx.playWarning();
     } finally {
       setUploadingFile(false);
     }
@@ -130,16 +144,33 @@ export const MessageInput: React.FC<MessageInputProps> = ({ parentId = null, pla
       )}
 
       <div className="input-container-wrapper">
-        <textarea
-          ref={textareaRef}
-          className="chat-textarea"
-          placeholder={placeholder || 'Send a message...'}
-          value={content}
-          onChange={(e) => setContent(e.target.value)}
-          onKeyDown={handleKeyDown}
-          rows={1}
-          disabled={isSending}
-        />
+        <div style={{ display: 'flex', gap: '8px', width: '100%', alignItems: 'flex-start' }}>
+          <span style={{ 
+            fontFamily: 'Consolas, monospace', 
+            color: 'var(--accent)', 
+            fontWeight: 700, 
+            fontSize: '1rem',
+            paddingTop: '0.35rem', 
+            userSelect: 'none',
+            opacity: 0.95
+          }}>
+            &gt;_
+          </span>
+          <textarea
+            ref={textareaRef}
+            className="chat-textarea"
+            placeholder={placeholder || 'Send a message...'}
+            value={content}
+            onChange={(e) => {
+              setContent(e.target.value);
+              // Play high-pitch digital keyboard stroke tick
+              soundFx.playHover();
+            }}
+            onKeyDown={handleKeyDown}
+            rows={1}
+            disabled={isSending}
+          />
+        </div>
 
         <div className="input-toolbar">
           <div className="toolbar-group">

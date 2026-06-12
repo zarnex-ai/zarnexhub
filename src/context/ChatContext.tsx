@@ -94,6 +94,17 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const typingTimeoutRef = useRef<{ [username: string]: any }>({});
   const broadcastChannelRef = useRef<any>(null);
 
+  const conversationsRef = useRef<Conversation[]>([]);
+  const membersRef = useRef<ConversationMember[]>([]);
+
+  useEffect(() => {
+    conversationsRef.current = conversations;
+  }, [conversations]);
+
+  useEffect(() => {
+    membersRef.current = members;
+  }, [members]);
+
   // Helper to extract channel keys for JSON chats lookup
   const getChatKeys = (conv: Conversation) => {
     if (conv.is_dm) {
@@ -267,7 +278,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         
         if (eventType === 'INSERT' || eventType === 'UPDATE') {
           if (activeConvIdRef.current) {
-            const activeConv = conversations.find(c => c.id === activeConvIdRef.current);
+            const activeConv = conversationsRef.current.find(c => c.id === activeConvIdRef.current);
             if (activeConv) {
               const { channelId, subChannelId } = getChatKeys(activeConv);
               const isMatch = newRecord.channel_id === channelId && 
@@ -275,13 +286,28 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
                  (!newRecord.sub_channel_id && !subChannelId));
 
               if (isMatch) {
-                setMessages(newRecord.chats || []);
+                if (newRecord.chats && Array.isArray(newRecord.chats)) {
+                  setMessages(newRecord.chats);
+                } else {
+                  // Fallback: if the chats payload is omitted or empty (due to payload limits/replica identity), fetch from DB
+                  supabase
+                    .from('channel_chats')
+                    .select('chats')
+                    .eq('channel_id', channelId)
+                    .eq('sub_channel_id', subChannelId)
+                    .maybeSingle()
+                    .then(({ data }) => {
+                      if (data?.chats) {
+                        setMessages(data.chats);
+                      }
+                    });
+                }
               }
             }
           }
         } else if (eventType === 'DELETE') {
           if (activeConvIdRef.current) {
-            const activeConv = conversations.find(c => c.id === activeConvIdRef.current);
+            const activeConv = conversationsRef.current.find(c => c.id === activeConvIdRef.current);
             if (activeConv) {
               const { channelId, subChannelId } = getChatKeys(activeConv);
               const isMatch = oldRecord.channel_id === channelId && 
@@ -337,7 +363,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
           }
         } else if (eventType === 'DELETE') {
           const deletedMemberId = oldRecord?.id;
-          const removedMember = members.find(m => m.id === deletedMemberId);
+          const removedMember = membersRef.current.find(m => m.id === deletedMemberId);
 
           setMembers(prev => prev.filter(m => m.id !== oldRecord.id));
 
@@ -360,7 +386,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return () => {
       channel.unsubscribe();
     };
-  }, [user, conversations]);
+  }, [user]);
 
   // Operations
   const createChannel = async (name: string, description: string, isPrivate: boolean, parentId: string | null = null): Promise<Conversation> => {
@@ -421,14 +447,28 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (!user) throw new Error('Not authenticated');
 
     // 1. Check if DM already exists with this user
-    // To do this, we need to inspect conversation members where they have the same conversation
-    // and both are members, and that conversation is a DM.
-    const myConvIds = members.filter(m => m.profile_id === user.id).map(m => m.conversation_id);
-    const targetConvIds = members.filter(m => m.profile_id === targetProfileId).map(m => m.conversation_id);
-    
-    // Find intersection
-    const commonConvIds = myConvIds.filter(id => targetConvIds.includes(id));
-    const existingDM = conversations.find(c => c.is_dm && commonConvIds.includes(c.id));
+    let existingDM: Conversation | undefined;
+
+    if (targetProfileId === user.id) {
+      // Find a DM conversation where the current user is the ONLY member
+      existingDM = conversations.find(c => {
+        if (!c.is_dm) return false;
+        const convMembers = members.filter(m => m.conversation_id === c.id);
+        return convMembers.length === 1 && convMembers[0].profile_id === user.id;
+      });
+    } else {
+      // Find a DM conversation where both user and target user are members
+      const myConvIds = members.filter(m => m.profile_id === user.id).map(m => m.conversation_id);
+      const targetConvIds = members.filter(m => m.profile_id === targetProfileId).map(m => m.conversation_id);
+      const commonConvIds = myConvIds.filter(id => targetConvIds.includes(id));
+      
+      existingDM = conversations.find(c => {
+        if (!c.is_dm) return false;
+        const convMembers = members.filter(m => m.conversation_id === c.id);
+        // Ensure it's a 2-member DM (user and target)
+        return convMembers.length === 2 && commonConvIds.includes(c.id);
+      });
+    }
 
     if (existingDM) {
       setActiveConversationId(existingDM.id);
@@ -448,11 +488,13 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     if (convErr) throw convErr;
 
-    // 3. Add members (Self and Target user)
+    // 3. Add members (Self, and Target user only if it is someone else)
     const membersToInsert = [
-      { conversation_id: conv.id, profile_id: user.id, role: 'member' },
-      { conversation_id: conv.id, profile_id: targetProfileId, role: 'member' }
+      { conversation_id: conv.id, profile_id: user.id, role: 'member' }
     ];
+    if (targetProfileId !== user.id) {
+      membersToInsert.push({ conversation_id: conv.id, profile_id: targetProfileId, role: 'member' });
+    }
 
     const { error: memErr } = await supabase
       .from('conversation_members')

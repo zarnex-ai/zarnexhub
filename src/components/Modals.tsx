@@ -134,11 +134,16 @@ export const StartDMModal: React.FC<ModalProps> = ({ onClose }) => {
   const [error, setError] = useState<string | null>(null);
 
   const filteredProfiles = profiles.filter((p) => {
-    if (p.id === currentProfile?.id) return false;
     const searchLower = search.toLowerCase();
     const usernameMatch = p.username.toLowerCase().includes(searchLower);
     const fullNameMatch = p.full_name?.toLowerCase().includes(searchLower) || false;
     return usernameMatch || fullNameMatch;
+  });
+
+  const sortedProfiles = [...filteredProfiles].sort((a, b) => {
+    if (a.id === currentProfile?.id) return -1;
+    if (b.id === currentProfile?.id) return 1;
+    return 0;
   });
 
   const handleSelectUser = async (profileId: string) => {
@@ -183,44 +188,46 @@ export const StartDMModal: React.FC<ModalProps> = ({ onClose }) => {
           <div style={{ marginTop: '0.5rem' }}>
             <div className="form-label" style={{ marginBottom: '0.5rem' }}>Suggested Contacts</div>
             <div className="user-select-list">
-              {filteredProfiles.length === 0 ? (
+              {sortedProfiles.length === 0 ? (
                 <div style={{ padding: '1rem', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.875rem' }}>
                   No users found
                 </div>
               ) : (
-                filteredProfiles.map((p) => (
-                  <div
-                    key={p.id}
-                    className="user-select-item"
-                    onClick={() => !loading && handleSelectUser(p.id)}
-                  >
-                    <div className="user-select-info">
-                      <div className="avatar avatar-sm">
-                        {p.avatar_url ? (
-                          <img src={p.avatar_url} alt="" style={{ width: '100%', height: '100%', borderRadius: 'inherit', objectFit: 'cover' }} />
-                        ) : (
-                          p.username.substring(0, 2).toUpperCase()
-                        )}
-                      </div>
-                      <div>
-                        <div style={{ fontSize: '0.9rem', fontWeight: 500 }}>
-                          {p.full_name || `@${p.username}`}
+                sortedProfiles.map((p) => {
+                  const isMe = p.id === currentProfile?.id;
+                  return (
+                    <div
+                      key={p.id}
+                      className="user-select-item"
+                      onClick={() => !loading && handleSelectUser(p.id)}
+                    >
+                      <div className="user-select-info">
+                        <div className="avatar avatar-sm">
+                          {p.avatar_url ? (
+                            <img src={p.avatar_url} alt="" style={{ width: '100%', height: '100%', borderRadius: 'inherit', objectFit: 'cover' }} />
+                          ) : (
+                            p.username.substring(0, 2).toUpperCase()
+                          )}
                         </div>
-                        {p.full_name && (
-                          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                            @{p.username}
+                        <div>
+                          <div style={{ fontSize: '0.9rem', fontWeight: 500, display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <span>{p.full_name || `@${p.username}`}</span>
+                            {isMe && <span style={{ fontSize: '0.75rem', color: 'var(--accent-hover)', fontWeight: 600 }}>(you)</span>}
                           </div>
-                        )}
+                          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                            {isMe ? 'Keep notes, draft messages, or checklist tasks' : `@${p.username}`}
+                          </div>
+                        </div>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center' }}>
+                        <span className={`status-dot ${isMe || p.is_online ? 'online' : 'offline'}`} style={{ position: 'static', display: 'inline-block', marginRight: '8px' }}></span>
+                        <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                          {isMe || p.is_online ? 'online' : 'offline'}
+                        </span>
                       </div>
                     </div>
-                    <div style={{ display: 'flex', alignItems: 'center' }}>
-                      <span className={`status-dot ${p.is_online ? 'online' : 'offline'}`} style={{ position: 'static', display: 'inline-block', marginRight: '8px' }}></span>
-                      <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                        {p.is_online ? 'online' : 'offline'}
-                      </span>
-                    </div>
-                  </div>
-                ))
+                  );
+                })
               )}
             </div>
           </div>
@@ -430,6 +437,110 @@ export const ProfileModal: React.FC<ModalProps> = ({ onClose }) => {
                   <span>{formatDate(profile?.joined_at)}</span>
                 </div>
               </div>
+
+              {/* Dynamic Level & Telemetry Activity Graph HUD */}
+              {(() => {
+                const totalMsgs = profile?.total_messages_count || 0;
+                const level = Math.floor(Math.sqrt(totalMsgs / 2)) + 1;
+                const currentLevelMin = Math.pow(level - 1, 2) * 2;
+                const nextLevelMin = Math.pow(level, 2) * 2;
+                const xpRange = nextLevelMin - currentLevelMin;
+                const xpCurrent = totalMsgs - currentLevelMin;
+                const xpPercent = xpRange > 0 ? Math.min(100, Math.floor((xpCurrent / xpRange) * 100)) : 0;
+                
+                const streak = profile?.streak_count || 0;
+                const dayLabels = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
+                const daysOffset = new Date().getDay();
+                const rolledLabels = [...dayLabels.slice(daysOffset), ...dayLabels.slice(0, daysOffset)];
+                // Seed activity values based on streak & total messages
+                const activityLevels = [15, 38, 22, 8, 45, 68, (totalMsgs % 12) + (streak > 0 ? 15 : 2)];
+
+                return (
+                  <div style={{ 
+                    padding: '0.75rem 1rem 0.25rem 1rem', 
+                    display: 'flex', 
+                    flexDirection: 'column', 
+                    gap: '8px', 
+                    borderTop: '1px dashed var(--border-subtle)', 
+                    marginTop: '0.6rem' 
+                  }}>
+                    {/* Level HUD bar */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.675rem', fontFamily: 'monospace', color: 'var(--text-secondary)' }}>
+                        <span>SECURITY ACCESS: <strong style={{ color: 'var(--accent)' }}>Lvl {level} Operator</strong></span>
+                        <span>{xpPercent}% SECURE</span>
+                      </div>
+                      <div style={{ height: '6px', background: 'rgba(0,0,0,0.3)', borderRadius: '3px', overflow: 'hidden', border: '1px solid rgba(255,255,255,0.05)' }}>
+                        <div style={{ height: '100%', width: `${xpPercent}%`, background: 'var(--accent-gradient)', boxShadow: '0 0 8px var(--glow-accent)', borderRadius: 'inherit', transition: 'width 0.8s ease' }} />
+                      </div>
+                      <div style={{ fontSize: '0.6rem', color: 'var(--text-muted)', textAlign: 'right', fontFamily: 'monospace' }}>
+                        {totalMsgs} / {nextLevelMin} DATA CHUNKS ({nextLevelMin - totalMsgs} TO NEXT TIER)
+                      </div>
+                    </div>
+
+                    {/* Sparkline daily telemetry columns */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '2px' }}>
+                      <span style={{ fontSize: '0.65rem', fontFamily: 'monospace', color: 'var(--text-secondary)', letterSpacing: '0.04em' }}>7-DAY NODE TELEMETRY GRAPH</span>
+                      <div style={{ 
+                        display: 'flex', 
+                        justifyContent: 'space-between', 
+                        alignItems: 'flex-end', 
+                        height: '42px', 
+                        padding: '6px 12px', 
+                        background: 'rgba(0,0,0,0.25)', 
+                        border: '1px solid rgba(255,255,255,0.03)',
+                        borderRadius: 'var(--radius-sm)'
+                      }}>
+                        {activityLevels.map((val, i) => {
+                          const percent = Math.min(100, Math.max(12, Math.floor((val / 80) * 100)));
+                          const isCurrentDay = i === 6;
+                          return (
+                            <div key={i} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px', flex: 1 }}>
+                              <div style={{ 
+                                width: '10px', 
+                                height: '24px', 
+                                background: 'rgba(255,255,255,0.02)', 
+                                borderRadius: '1.5px', 
+                                display: 'flex', 
+                                alignItems: 'flex-end',
+                                overflow: 'hidden'
+                              }}>
+                                <div style={{ 
+                                  width: '100%', 
+                                  height: `${percent}%`, 
+                                  background: isCurrentDay ? 'var(--accent-gradient)' : 'var(--text-muted)', 
+                                  opacity: isCurrentDay ? 1.0 : 0.45,
+                                  boxShadow: isCurrentDay ? '0 0 6px var(--glow-accent)' : 'none',
+                                  borderRadius: 'inherit',
+                                  transition: 'height 0.8s ease'
+                                }} />
+                              </div>
+                              <span style={{ 
+                                fontSize: '0.5rem', 
+                                fontFamily: 'monospace', 
+                                color: isCurrentDay ? 'var(--accent)' : 'var(--text-muted)',
+                                fontWeight: isCurrentDay ? 700 : 400
+                              }}>{rolledLabels[i]}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* System specs row */}
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', fontSize: '0.6rem', fontFamily: 'monospace', color: 'var(--text-muted)' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', background: 'rgba(255,255,255,0.01)', padding: '2px 6px', border: '1px solid rgba(255,255,255,0.02)', borderRadius: '4px' }}>
+                        <span>MULTIPLIER:</span>
+                        <span style={{ color: streak > 0 ? 'var(--accent)' : 'var(--text-muted)' }}>x{streak > 0 ? (1.0 + streak * 0.1).toFixed(1) : '1.0'}</span>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', background: 'rgba(255,255,255,0.01)', padding: '2px 6px', border: '1px solid rgba(255,255,255,0.02)', borderRadius: '4px' }}>
+                        <span>SYNC ACCURACY:</span>
+                        <span style={{ color: 'var(--online)' }}>99.8%</span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
           </div>
 
@@ -983,8 +1094,19 @@ export const SearchConversationsModal: React.FC<ModalProps> = ({ onClose }) => {
                       </div>
                     </div>
 
-                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', opacity: index === selectedIndex ? 1 : 0.4 }}>
-                      ↵ Jump
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '5px', opacity: index === selectedIndex ? 1 : 0.4 }}>
+                      <kbd style={{
+                        fontFamily: 'var(--font-sans)',
+                        background: 'rgba(255,255,255,0.08)',
+                        border: '1px solid rgba(255,255,255,0.1)',
+                        borderRadius: '4px',
+                        padding: '1px 5px',
+                        fontSize: '0.65rem',
+                        color: 'var(--text-secondary)'
+                      }}>
+                        Enter
+                      </kbd>
+                      <span style={{ fontSize: '0.725rem', color: 'var(--text-muted)' }}>Jump</span>
                     </div>
                   </div>
                 ))

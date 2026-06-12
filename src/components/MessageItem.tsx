@@ -1,8 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useLayoutEffect } from 'react';
 import { useChat } from '../context/ChatContext';
 import type { Message, Reaction } from '../context/ChatContext';
 import { useAuth } from '../context/AuthContext';
-import { Edit2, Trash2, MessageSquare, Smile, Check, X } from 'lucide-react';
+import { Edit2, Trash2, MessageSquare, Smile, Check, X, Download, Copy, FileText, ChevronDown, ChevronUp } from 'lucide-react';
+import { soundFx } from '../lib/soundFx';
+
 
 interface MessageItemProps {
   message: Message;
@@ -16,6 +18,62 @@ export const MessageItem: React.FC<MessageItemProps> = ({ message, isThreadView 
   const [isEditing, setIsEditing] = useState(false);
   const [editContent, setEditContent] = useState(message.content);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const [isExpanded, setIsExpanded] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [snippetColor, setSnippetColor] = useState<'amber' | 'green' | 'steel'>('green');
+
+  const emojiPickerRef = useRef<HTMLDivElement>(null);
+  const [pickerCoords, setPickerCoords] = useState<React.CSSProperties>({
+    bottom: '35px',
+    right: '0px',
+    left: 'auto',
+    opacity: 0,
+  });
+
+  useLayoutEffect(() => {
+    if (showEmojiPicker && emojiPickerRef.current) {
+      const rect = emojiPickerRef.current.getBoundingClientRect();
+      const viewportWidth = window.innerWidth;
+      
+      let rightVal = '0px';
+      let leftVal = 'auto';
+      let bottomVal = '35px';
+      let topVal = 'auto';
+
+      // Horizontal boundary auto-correction
+      if (rect.right > viewportWidth - 16) {
+        const overflowX = rect.right - (viewportWidth - 16);
+        rightVal = `${overflowX}px`;
+      }
+      if (rect.left < 16) {
+        leftVal = '0px';
+        rightVal = 'auto';
+      }
+
+      // Vertical boundary auto-correction (if it overflows the top viewport boundary)
+      if (rect.top < 16) {
+        bottomVal = 'auto';
+        topVal = '35px';
+      }
+
+      setPickerCoords({
+        bottom: bottomVal,
+        top: topVal,
+        right: rightVal,
+        left: leftVal,
+        opacity: 1,
+        transition: 'opacity 0.15s ease-out'
+      });
+    } else {
+      setPickerCoords({
+        bottom: '35px',
+        right: '0px',
+        left: 'auto',
+        opacity: 0,
+      });
+    }
+  }, [showEmojiPicker]);
+
 
   // Lookup sender profile from the global list loaded in ChatContext
   const senderProfile = profiles.find(p => p.id === message.sender_id);
@@ -71,6 +129,62 @@ export const MessageItem: React.FC<MessageItemProps> = ({ message, isThreadView 
     } catch (err) {
       console.error('Failed to toggle reaction:', err);
     }
+  };
+
+  const lineCount = message.content.split('\n').length;
+  const isLongMessage = lineCount > 15;
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(message.content);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error('Failed to copy text:', err);
+    }
+  };
+
+  const getFileExtension = (content: string) => {
+    const codeBlockMatch = content.match(/```(\w+)?/);
+    if (codeBlockMatch && codeBlockMatch[1]) {
+      const lang = codeBlockMatch[1].toLowerCase();
+      const mapping: { [key: string]: string } = {
+        javascript: 'js', js: 'js',
+        typescript: 'ts', ts: 'ts',
+        tsx: 'tsx', jsx: 'jsx',
+        python: 'py', py: 'py',
+        html: 'html', css: 'css',
+        sql: 'sql', json: 'json',
+        rust: 'rs', cpp: 'cpp', c: 'c',
+        java: 'java', go: 'go', sh: 'sh',
+        bash: 'sh', yaml: 'yaml', yml: 'yaml'
+      };
+      return mapping[lang] || lang;
+    }
+    return 'txt';
+  };
+
+  const handleDownload = () => {
+    let fileContent = message.content;
+    const codeBlockRegex = /^```(?:\w+)?\n([\s\S]*?)\n```$/;
+    const match = message.content.match(codeBlockRegex);
+    if (match) {
+      fileContent = match[1];
+    }
+
+    const blob = new Blob([fileContent], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    
+    const ext = getFileExtension(message.content);
+    const filename = `program_${message.id.substring(0, 8)}.${ext}`;
+    
+    link.setAttribute('download', filename);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
   const formatTime = (isoString: string) => {
@@ -148,8 +262,163 @@ export const MessageItem: React.FC<MessageItemProps> = ({ message, isThreadView 
           </div>
         ) : (
           <div className="message-content">
-            {message.content}
-            {message.is_edited && <span className="message-edited">(edited)</span>}
+            {isLongMessage ? (
+              <div className="terminal-snippet-frame">
+                {/* Vintage Snippet Header */}
+                <div className="terminal-snippet-header">
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <FileText size={14} style={{ color: 'var(--accent)' }} />
+                    <span style={{ fontSize: '0.8rem', fontFamily: 'var(--font-display)', fontWeight: 600 }}>
+                      program_{message.id.substring(0, 8)}.{getFileExtension(message.content)} ({lineCount} lines)
+                    </span>
+                  </div>
+
+                  {/* Retro CRT Color Selector */}
+                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginRight: 'auto', marginLeft: '16px' }}>
+                    <button 
+                      onClick={() => { soundFx.playClick(); setSnippetColor('green'); }}
+                      style={{ width: '10px', height: '10px', borderRadius: '50%', background: '#33ff33', border: '1px solid rgba(255,255,255,0.3)', opacity: snippetColor === 'green' ? 1 : 0.35, cursor: 'pointer' }}
+                      title="Green Phosphor"
+                    />
+                    <button 
+                      onClick={() => { soundFx.playClick(); setSnippetColor('amber'); }}
+                      style={{ width: '10px', height: '10px', borderRadius: '50%', background: '#ffb000', border: '1px solid rgba(255,255,255,0.3)', opacity: snippetColor === 'amber' ? 1 : 0.35, cursor: 'pointer' }}
+                      title="Amber Phosphor"
+                    />
+                    <button 
+                      onClick={() => { soundFx.playClick(); setSnippetColor('steel'); }}
+                      style={{ width: '10px', height: '10px', borderRadius: '50%', background: '#cbd5e1', border: '1px solid rgba(255,255,255,0.3)', opacity: snippetColor === 'steel' ? 1 : 0.35, cursor: 'pointer' }}
+                      title="Steel console"
+                    />
+                  </div>
+
+                  {/* Actions */}
+                  <div style={{ display: 'flex', gap: '0.5rem' }}>
+                    <button 
+                      onClick={() => {
+                        soundFx.playClick();
+                        handleCopy();
+                      }}
+                      onMouseEnter={() => soundFx.playHover()}
+                      style={{
+                        padding: '0.25rem 0.5rem',
+                        fontSize: '0.75rem',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '4px',
+                        background: 'rgba(255, 255, 255, 0.03)',
+                        border: '1px solid var(--border-subtle)',
+                        borderRadius: '4px',
+                        color: 'var(--text-secondary)',
+                        cursor: 'pointer'
+                      }}
+                      title="Copy to clipboard"
+                    >
+                      {copied ? <Check size={12} style={{ color: 'var(--online)' }} /> : <Copy size={12} />}
+                      <span>{copied ? 'Copied' : 'Copy'}</span>
+                    </button>
+                    <button 
+                      onClick={() => {
+                        soundFx.playClick();
+                        handleDownload();
+                      }}
+                      onMouseEnter={() => soundFx.playHover()}
+                      style={{
+                        padding: '0.25rem 0.5rem',
+                        fontSize: '0.75rem',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '4px',
+                        background: 'rgba(255, 255, 255, 0.03)',
+                        border: '1px solid var(--border-subtle)',
+                        borderRadius: '4px',
+                        color: 'var(--text-secondary)',
+                        cursor: 'pointer'
+                      }}
+                      title="Download file"
+                    >
+                      <Download size={12} />
+                      <span>Download</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Index Line-by-Line Snippet Body */}
+                <div 
+                  className={`terminal-snippet-body ${snippetColor}-phosphor`} 
+                  style={{
+                    maxHeight: isExpanded ? 'none' : '260px',
+                    overflowY: isExpanded ? 'auto' : 'hidden',
+                  }}
+                >
+                  {message.content.split('\n').map((line, idx) => (
+                    <div key={idx} className="terminal-line">
+                      <span className="terminal-line-index">{idx + 1}</span>
+                      <span>{line}</span>
+                    </div>
+                  ))}
+                  
+                  {!isExpanded && (
+                    <div style={{
+                      position: 'absolute',
+                      bottom: 0,
+                      left: 0,
+                      width: '100%',
+                      height: '70px',
+                      background: 'linear-gradient(180deg, transparent 0%, #030408 100%)',
+                      pointerEvents: 'none',
+                      zIndex: 3
+                    }} />
+                  )}
+                </div>
+
+                {/* Snippet Footer Expand Trigger */}
+                <div style={{
+                  padding: '0.4rem',
+                  backgroundColor: 'rgba(0, 0, 0, 0.3)',
+                  borderTop: '1px solid var(--border-subtle)',
+                  display: 'flex',
+                  justifyContent: 'center',
+                  zIndex: 4,
+                  position: 'relative'
+                }}>
+                  <button
+                    onClick={() => {
+                      soundFx.playClick();
+                      setIsExpanded(!isExpanded);
+                    }}
+                    onMouseEnter={() => soundFx.playHover()}
+                    style={{
+                      fontSize: '0.75rem',
+                      fontWeight: 600,
+                      color: 'var(--accent-hover)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '4px',
+                      padding: '2px 8px',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    {isExpanded ? (
+                      <>
+                        <ChevronUp size={13} />
+                        <span>Collapse Snippet</span>
+                      </>
+                    ) : (
+                      <>
+                        <ChevronDown size={13} />
+                        <span>Expand Snippet ({lineCount - 8} more lines)</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <>
+                {message.content}
+                {message.is_edited && <span className="message-edited">(edited)</span>}
+              </>
+            )}
           </div>
         )}
 
@@ -162,7 +431,11 @@ export const MessageItem: React.FC<MessageItemProps> = ({ message, isThreadView 
                 <button
                   key={group.emoji}
                   className={`reaction-badge ${hasReacted ? 'active' : ''}`}
-                  onClick={() => handleToggleReaction(group.emoji)}
+                  onMouseEnter={() => soundFx.playHover()}
+                  onClick={() => {
+                    soundFx.playClick();
+                    handleToggleReaction(group.emoji);
+                  }}
                   title={`${group.userIds.length} reaction(s)`}
                 >
                   <span>{group.emoji}</span>
@@ -177,7 +450,11 @@ export const MessageItem: React.FC<MessageItemProps> = ({ message, isThreadView 
         {replyCount > 0 && !isThreadView && (
           <button 
             className="thread-replies-link"
-            onClick={() => setThreadParent(message)}
+            onMouseEnter={() => soundFx.playHover()}
+            onClick={() => {
+              soundFx.playClick();
+              setThreadParent(message);
+            }}
           >
             <MessageSquare size={12} />
             <span>{replyCount} {replyCount === 1 ? 'reply' : 'replies'}</span>
@@ -191,7 +468,11 @@ export const MessageItem: React.FC<MessageItemProps> = ({ message, isThreadView 
           {/* Reaction Quick List */}
           <button 
             className="action-btn" 
-            onClick={() => setShowEmojiPicker(!showEmojiPicker)}
+            onMouseEnter={() => soundFx.playHover()}
+            onClick={() => {
+              soundFx.playClick();
+              setShowEmojiPicker(!showEmojiPicker);
+            }}
             title="React with Emoji"
           >
             <Smile size={14} />
@@ -199,10 +480,26 @@ export const MessageItem: React.FC<MessageItemProps> = ({ message, isThreadView 
 
           {isSender && (
             <>
-              <button className="action-btn" onClick={() => setIsEditing(true)} title="Edit Message">
+              <button 
+                className="action-btn" 
+                onMouseEnter={() => soundFx.playHover()}
+                onClick={() => {
+                  soundFx.playClick();
+                  setIsEditing(true);
+                }} 
+                title="Edit Message"
+              >
                 <Edit2 size={14} />
               </button>
-              <button className="action-btn" onClick={handleDelete} title="Delete Message">
+              <button 
+                className="action-btn" 
+                onMouseEnter={() => soundFx.playHover()}
+                onClick={() => {
+                  soundFx.playWarning();
+                  handleDelete();
+                }} 
+                title="Delete Message"
+              >
                 <Trash2 size={14} style={{ color: '#f87171' }} />
               </button>
             </>
@@ -211,7 +508,11 @@ export const MessageItem: React.FC<MessageItemProps> = ({ message, isThreadView 
           {!isThreadView && !message.parent_id && (
             <button 
               className="action-btn" 
-              onClick={() => setThreadParent(message)} 
+              onMouseEnter={() => soundFx.playHover()}
+              onClick={() => {
+                soundFx.playClick();
+                setThreadParent(message);
+              }} 
               title="Reply in Thread"
             >
               <MessageSquare size={14} />
@@ -220,12 +521,20 @@ export const MessageItem: React.FC<MessageItemProps> = ({ message, isThreadView 
 
           {/* Floated Emoji Pick Popover */}
           {showEmojiPicker && (
-            <div className="emoji-picker-container" style={{ bottom: '30px', right: '0px' }}>
+            <div 
+              ref={emojiPickerRef}
+              className="emoji-picker-container" 
+              style={{ ...pickerCoords }}
+            >
               {quickEmojis.map((emoji) => (
                 <button
                   key={emoji}
                   className="emoji-btn"
-                  onClick={() => handleToggleReaction(emoji)}
+                  onMouseEnter={() => soundFx.playHover()}
+                  onClick={() => {
+                    soundFx.playClick();
+                    handleToggleReaction(emoji);
+                  }}
                 >
                   {emoji}
                 </button>
@@ -236,4 +545,4 @@ export const MessageItem: React.FC<MessageItemProps> = ({ message, isThreadView 
       )}
     </div>
   );
-};
+}

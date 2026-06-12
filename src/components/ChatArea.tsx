@@ -5,6 +5,8 @@ import { MessageItem } from './MessageItem';
 import { MessageInput } from './MessageInput';
 import { Hash, Search, Smile, MessageSquare, Users } from 'lucide-react';
 import { ManageMembersModal } from './Modals';
+import { TelemetryWidget } from './TelemetryWidget';
+import { soundFx } from '../lib/soundFx';
 
 export const ChatArea: React.FC = () => {
   const { 
@@ -72,7 +74,15 @@ export const ChatArea: React.FC = () => {
   };
 
   const dmDetails = activeConversation.is_dm ? getDMDetails(activeConversation.id) : null;
-  const channelMembersCount = members.filter(m => m.conversation_id === activeConversation.id).length;
+  const channelMembers = members.filter(m => m.conversation_id === activeConversation.id);
+  const channelMembersCount = channelMembers.length;
+
+  // Map member profiles for cluster display (mockup layout)
+  const conversationProfiles = channelMembers
+    .map(m => profiles.find(p => p.id === m.profile_id))
+    .filter(Boolean);
+  const chatClusterCount = Math.min(conversationProfiles.length, 4);
+  const chatCluster = conversationProfiles.slice(0, chatClusterCount);
 
   // Filter messages based on search text and only render top-level messages in main feed
   const filteredMessages = messages.filter((msg) => {
@@ -96,61 +106,100 @@ export const ChatArea: React.FC = () => {
   return (
     <div className="chat-area">
       {/* Chat Canvas Header */}
-      <header className="chat-header">
-        <div className="chat-title-info">
-          <h2 className="chat-title">
-            {activeConversation.is_dm ? (
-              <>
-                <span className={`status-dot ${dmDetails?.isOnline ? 'online' : 'offline'}`} style={{ position: 'static', display: 'inline-block', width: '12px', height: '12px', border: 'none' }}></span>
-                <span>{dmDetails?.name}</span>
-              </>
-            ) : (
-              <>
-                <Hash size={18} style={{ color: 'var(--text-secondary)' }} />
-                <span>{activeConversation.name}</span>
-              </>
-            )}
-          </h2>
-          <p className="chat-subtitle">
-            {activeConversation.is_dm ? (
-              dmDetails?.statusText || 'Direct messaging room'
-            ) : (
-              <>
-                <button 
-                  onClick={() => setShowMembersModal(true)} 
-                  style={{ textDecoration: 'underline', fontWeight: 500, cursor: 'pointer', background: 'none', border: 'none', padding: 0 }}
-                  title="Manage channel members"
+      <header className="chat-header" style={{ height: 'auto', padding: '0.75rem 1.5rem', gap: '12px', flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flex: 1, minWidth: '200px' }}>
+          <div className="chat-title-info">
+            <h2 className="chat-title">
+              {activeConversation.is_dm ? (
+                <>
+                  <span className={`status-dot ${dmDetails?.isOnline ? 'online' : 'offline'}`} style={{ position: 'static', display: 'inline-block', width: '12px', height: '12px', border: 'none' }}></span>
+                  <span>{dmDetails?.name}</span>
+                </>
+              ) : (
+                <>
+                  <Hash size={18} style={{ color: 'var(--accent)' }} />
+                  <span>{activeConversation.name}</span>
+                </>
+              )}
+            </h2>
+            <p className="chat-subtitle" style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+              {activeConversation.is_dm ? (
+                dmDetails?.statusText || 'Direct messaging room'
+              ) : (
+                <>
+                  <button 
+                    onClick={() => {
+                      soundFx.playClick();
+                      setShowMembersModal(true);
+                    }} 
+                    onMouseEnter={() => soundFx.playHover()}
+                    className="console-badge"
+                    title="Manage channel members"
+                  >
+                    <Users size={12} style={{ color: 'var(--accent)' }} />
+                    <span>{channelMembersCount} {channelMembersCount === 1 ? 'member' : 'members'}</span>
+                  </button>
+                  <span style={{ fontSize: '0.75rem', opacity: 0.65 }}>{activeConversation.description || 'No description provided.'}</span>
+                </>
+              )}
+            </p>
+          </div>
+
+          {/* Overlapping member cluster on the right side of title (ref image style) */}
+          {!activeConversation.is_dm && (
+            <div className="avatar-cluster" title="Conversation node members" style={{ marginLeft: '6px' }}>
+              {chatCluster.map((p, idx) => (
+                <div 
+                  key={p!.id} 
+                  className="avatar-cluster-item"
+                  style={{ zIndex: chatClusterCount - idx, width: '26px', height: '26px' }}
+                  title={p!.full_name || p!.username}
                 >
-                  {channelMembersCount} {channelMembersCount === 1 ? 'member' : 'members'}
-                </button>
-                <span> • {activeConversation.description || 'No description provided.'}</span>
-              </>
-            )}
-          </p>
+                  {p!.avatar_url ? (
+                    <img src={p!.avatar_url} alt="" />
+                  ) : (
+                    (p!.username || 'U').substring(0, 1).toUpperCase()
+                  )}
+                </div>
+              ))}
+              {conversationProfiles.length > chatClusterCount && (
+                <div className="avatar-cluster-item" style={{ zIndex: 0, width: '26px', height: '26px' }} title="More conversation members">
+                  +{conversationProfiles.length - chatClusterCount}
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
-        {/* Header Search Filter */}
-        <div className="chat-header-actions">
+        {/* Live HUD Telemetry Widget */}
+        <TelemetryWidget />
+
+        {/* Header Search Filter & Actions */}
+        <div className="chat-header-actions" style={{ marginLeft: 'auto' }}>
           {!activeConversation.is_dm && (
             <button 
               className="toolbar-btn" 
               style={{ 
-                padding: '0.4rem 0.75rem', 
-                borderRadius: 'var(--radius-sm)', 
-                border: '1px solid var(--border-subtle)', 
-                background: 'var(--bg-input)', 
+                padding: '0.45rem 0.85rem', 
+                borderRadius: 'var(--radius-md)', 
+                border: '1px solid rgba(255, 255, 255, 0.08)', 
+                background: 'rgba(255, 255, 255, 0.02)', 
                 display: 'flex', 
                 alignItems: 'center', 
                 gap: '6px', 
-                color: 'var(--text-secondary)',
+                color: 'var(--text-primary)',
                 fontSize: '0.8rem',
-                marginRight: '0.5rem'
+                marginRight: '0.5rem',
               }}
-              onClick={() => setShowMembersModal(true)}
+              onMouseEnter={() => soundFx.playHover()}
+              onClick={() => {
+                soundFx.playClick();
+                setShowMembersModal(true);
+              }}
               title="Manage channel members"
             >
-              <Users size={15} />
-              <span>Members ({channelMembersCount})</span>
+              <Users size={14} style={{ color: 'var(--accent)' }} />
+              <span>Manage Members</span>
             </button>
           )}
           <div className="search-container">
@@ -161,6 +210,7 @@ export const ChatArea: React.FC = () => {
               placeholder="Search conversation..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
+              onFocus={() => soundFx.playHover()}
             />
           </div>
         </div>

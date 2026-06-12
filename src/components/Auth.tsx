@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { supabase } from '../lib/supabase';
 import confetti from 'canvas-confetti';
-import { Hash } from 'lucide-react';
+import { Hash, Fingerprint, Shield, Key } from 'lucide-react';
+import { soundFx } from '../lib/soundFx';
 
 const API_URL = import.meta.env.VITE_API_URL || (window.location.hostname === 'localhost' ? 'http://localhost:5000' : '');
 
@@ -17,6 +18,18 @@ export const Auth: React.FC = () => {
   const [otpToken, setOtpToken] = useState('');
   const [otpHash, setOtpHash] = useState('');
   const [otpExpiresAt, setOtpExpiresAt] = useState<number>(0);
+  const [biometricState, setBiometricState] = useState<'idle' | 'scanning' | 'passed'>('idle');
+
+  const runBiometricScan = () => {
+    if (biometricState !== 'idle') return;
+    setBiometricState('scanning');
+    soundFx.playScan(2.0);
+    setTimeout(() => {
+      setBiometricState('passed');
+      soundFx.playReceive();
+    }, 2000);
+  };
+
  
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -183,14 +196,13 @@ export const Auth: React.FC = () => {
               <label className="form-label">Verification Code</label>
               <input
                 type="text"
-                className="form-input"
+                className="form-input otp-input"
                 placeholder="123456"
                 maxLength={6}
                 value={otpToken}
                 onChange={(e) => setOtpToken(e.target.value.replace(/\D/g, ''))}
                 required
                 disabled={loading}
-                style={{ textAlign: 'center', letterSpacing: '0.4em', fontSize: '1.25rem', fontWeight: 600 }}
               />
             </div>
 
@@ -228,15 +240,58 @@ export const Auth: React.FC = () => {
     );
   }
 
+  if (biometricState !== 'passed') {
+    return (
+      <div className="auth-screen">
+        <div className="auth-card" style={{ maxWidth: '420px', border: '1px solid rgba(217, 70, 239, 0.25)' }}>
+          <div className="auth-logo" style={{ animation: 'none' }}>
+            <Shield size={36} strokeWidth={2} style={{ color: 'var(--accent)' }} />
+          </div>
+          <h1 className="auth-title" style={{ fontSize: '1.45rem', fontFamily: 'var(--font-display)', letterSpacing: '0.04em' }}>SECURITY GATEWAY</h1>
+          <p className="auth-subtitle" style={{ fontSize: '0.8rem', color: '#f87171', fontFamily: 'monospace', marginBottom: '1.5rem' }}>
+            [SYSTEM ENCRYPTED: AREA D9]
+          </p>
+
+          <div className="security-clearance-header" style={{ margin: '1rem 0' }}>
+            BIOMETRIC IDENTITY CHECK
+          </div>
+
+          <div 
+            className={`biometric-scanner-container ${biometricState === 'scanning' ? 'scanning' : ''}`}
+            onClick={runBiometricScan}
+          >
+            {biometricState === 'scanning' && <div className="biometric-laser-line" />}
+            <Fingerprint 
+              size={64} 
+              className="biometric-fingerprint" 
+              style={{ 
+                color: biometricState === 'scanning' ? 'var(--accent)' : 'rgba(255,255,255,0.2)',
+                animation: biometricState === 'scanning' ? 'pulse-slow 0.8s infinite ease-in-out' : 'none'
+              }} 
+            />
+            <span style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)' }}>
+              {biometricState === 'scanning' ? 'DECRYPTING PATTERNS...' : 'TAP SENSOR TO VERIFY'}
+            </span>
+          </div>
+
+          <div style={{ marginTop: '1.75rem', fontSize: '0.675rem', fontFamily: 'monospace', color: 'var(--text-muted)', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+            <span>NODE AGENT: SUPABASE_AUTH_VAULT_v8.1</span>
+            <span>ENCRYPTION SYNC STATUS: NOMINAL</span>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="auth-screen">
       <div className="auth-card">
         <div className="auth-logo">
-          <Hash size={36} strokeWidth={2.5} />
+          <Key size={36} strokeWidth={2} style={{ color: 'var(--accent-hover)' }} />
         </div>
-        <h1 className="auth-title">Welcome to ZarnexHub</h1>
+        <h1 className="auth-title" style={{ fontFamily: 'var(--font-display)' }}>ZarnexHub Terminal</h1>
         <p className="auth-subtitle">
-          {isSignUp ? 'Create an account to join the workspace' : 'Sign in to access your channels'}
+          {isSignUp ? 'Create credentials to join this console node' : 'Enter security keys to unlock session'}
         </p>
 
         {error && <div className="auth-error">{error}</div>}
@@ -293,15 +348,27 @@ export const Auth: React.FC = () => {
             />
           </div>
 
-          <button type="submit" className="auth-btn" disabled={loading}>
-            {loading ? 'Processing...' : isSignUp ? 'Create Account' : 'Sign In'}
+          <button 
+            type="submit" 
+            className="auth-btn" 
+            disabled={loading}
+            onMouseEnter={() => soundFx.playHover()}
+            onClick={() => soundFx.playClick()}
+          >
+            {loading ? 'Decrypting Access Keys...' : isSignUp ? 'Authorize Node Account' : 'Decrypt Lock & Sign In'}
           </button>
         </form>
 
         <p className="auth-switch-text">
-          {isSignUp ? 'Already have an account? ' : "Don't have an account? "}
-          <span className="auth-switch-link" onClick={() => setIsSignUp(!isSignUp)}>
-            {isSignUp ? 'Sign In' : 'Sign Up'}
+          {isSignUp ? 'Already authorized? ' : "Need a new account? "}
+          <span 
+            className="auth-switch-link" 
+            onClick={() => {
+              soundFx.playClick();
+              setIsSignUp(!isSignUp);
+            }}
+          >
+            {isSignUp ? 'Sign In' : 'Register Credentials'}
           </span>
         </p>
       </div>
