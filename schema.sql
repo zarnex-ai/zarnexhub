@@ -36,26 +36,17 @@ create table if not exists public.conversation_members (
   unique (conversation_id, profile_id)
 );
 
--- 4. Create Messages Table (With thread support via parent_id)
-create table if not exists public.messages (
+-- 4. Create Channel Chats Table (Stores all chat history in a single JSON column)
+create table if not exists public.channel_chats (
   id uuid default gen_random_uuid() primary key,
-  conversation_id uuid references public.conversations(id) on delete cascade not null,
-  sender_id uuid references public.profiles(id) on delete cascade not null,
-  content text not null,
-  parent_id uuid references public.messages(id) on delete cascade, -- Self-referencing FK for thread replies
-  is_edited boolean default false not null,
-  created_at timestamp with time zone default timezone('utc'::text, now()) not null
+  channel_id uuid references public.conversations(id) on delete cascade not null,
+  sub_channel_id uuid references public.conversations(id) on delete cascade,
+  chats jsonb default '[]'::jsonb not null
 );
 
--- 5. Create Reactions Table
-create table if not exists public.reactions (
-  id uuid default gen_random_uuid() primary key,
-  message_id uuid references public.messages(id) on delete cascade not null,
-  profile_id uuid references public.profiles(id) on delete cascade not null,
-  emoji text not null,
-  created_at timestamp with time zone default timezone('utc'::text, now()) not null,
-  unique (message_id, profile_id, emoji)
-);
+-- Ensure uniqueness of channel_id and sub_channel_id combinations (handling nulls)
+create unique index if not exists channel_chats_unique_idx on public.channel_chats (channel_id) where sub_channel_id is null;
+create unique index if not exists channel_sub_chats_unique_idx on public.channel_chats (channel_id, sub_channel_id) where sub_channel_id is not null;
 
 -- ====================================================================
 -- AUTOMATED PROFILE CREATION TRIGGER
@@ -222,80 +213,36 @@ create policy "Allow membership removal"
     public.is_admin_or_owner(conversation_id, auth.uid())
   );
 
--- --- MESSAGES POLICIES ---
--- Members can read messages of conversations they belong to
-drop policy if exists "Allow reading messages if conversation member" on public.messages;
-create policy "Allow reading messages if conversation member"
-  on public.messages for select
+-- --- CONVERSATIONS DELETION POLICY ---
+-- Users can delete conversations if they are the creator or a member (cascades and deletes chats)
+drop policy if exists "Allow conversations deletion for members or creators" on public.conversations;
+create policy "Allow conversations deletion for members or creators"
+  on public.conversations for delete
   to authenticated
   using (
-    public.is_member_of_conversation(conversation_id, auth.uid()) or exists (
-      select 1 from public.conversations
-      where conversations.id = messages.conversation_id
-      and not conversations.is_private
-    )
+    created_by = auth.uid() or
+    public.is_member_of_conversation(id, auth.uid())
   );
 
--- Members can insert messages in conversations they belong to
-drop policy if exists "Allow sending messages if conversation member" on public.messages;
-create policy "Allow sending messages if conversation member"
-  on public.messages for insert
+-- --- CHANNEL CHATS POLICIES ---
+alter table public.channel_chats enable row level security;
+
+-- Members of the conversation can view its chats
+drop policy if exists "Allow select on channel_chats for members" on public.channel_chats;
+create policy "Allow select on channel_chats for members"
+  on public.channel_chats for select
   to authenticated
-  with check (
-    sender_id = auth.uid() and
-    (
-      public.is_member_of_conversation(conversation_id, auth.uid()) or exists (
-        select 1 from public.conversations
-        where conversations.id = messages.conversation_id
-        and not conversations.is_private
+  using (
+    exists (
+      select 1 from public.conversations
+      where id = channel_id
+      and (
+        not is_private or
+        created_by = auth.uid() or
+        public.is_member_of_conversation(id, auth.uid())
       )
     )
   );
-
--- Users can update/delete their own messages
-drop policy if exists "Allow update for sender" on public.messages;
-create policy "Allow update for sender"
-  on public.messages for update
-  to authenticated
-  using (sender_id = auth.uid());
-
-drop policy if exists "Allow delete for sender" on public.messages;
-create policy "Allow delete for sender"
-  on public.messages for delete
-  to authenticated
-  using (sender_id = auth.uid());
-
--- --- REACTIONS POLICIES ---
--- Users can view reactions on messages they have access to
-drop policy if exists "Allow select reactions" on public.reactions;
-create policy "Allow select reactions"
-  on public.reactions for select
-  to authenticated
-  using (
-    exists (
-      select 1 from public.messages
-      where messages.id = reactions.message_id
-    )
-  );
-
--- Users can add reactions to messages they can read
-drop policy if exists "Allow inserting reactions" on public.reactions;
-create policy "Allow inserting reactions"
-  on public.reactions for insert
-  to authenticated
-  with check (
-    profile_id = auth.uid() and
-    exists (
-      select 1 from public.messages
-      where messages.id = message_id
-    )
-  );
-
--- Users can remove their own reactions
-create policy "Allow deleting own reactions"
-  on public.reactions for delete
-  to authenticated
-  using (profile_id = auth.uid());
 
 -- ====================================================================
 -- REALTIME ENABLEMENT
@@ -306,8 +253,7 @@ create policy "Allow deleting own reactions"
 alter publication supabase_realtime add table public.profiles;
 alter publication supabase_realtime add table public.conversations;
 alter publication supabase_realtime add table public.conversation_members;
-alter publication supabase_realtime add table public.messages;
-alter publication supabase_realtime add table public.reactions;
+alter publication supabase_realtime add table public.channel_chats;
 
 -- ====================================================================
 -- STORAGE BUCKETS & POLICIES SETUP
@@ -380,8 +326,8 @@ alter table public.profiles
   add column if not exists joined_at timestamp with time zone default timezone('utc'::text, now()) not null;
 
 -- 2. Create Streak Calculator Function
-create or replace function public.increment_message_stats()
-returns trigger as $$
+create or replace function public.increment_message_stats(p_sender_id uuid)
+returns void as $$
 declare
   last_msg timestamp with time zone;
   current_streak int;
@@ -390,7 +336,7 @@ begin
   -- Retrieve user's last message time and current streak
   select updated_at, streak_count into last_msg, current_streak
   from public.profiles
-  where id = new.sender_id;
+  where id = p_sender_id;
 
   -- Calculate days difference between now and last message (UTC dates)
   if last_msg is null or last_msg = '-infinity'::timestamp then
@@ -400,7 +346,7 @@ begin
       streak_count = 1,
       total_messages_count = 1,
       updated_at = now()
-    where id = new.sender_id;
+    where id = p_sender_id;
   else
     days_diff := extract(day from (date_trunc('day', now()) - date_trunc('day', last_msg)));
 
@@ -409,7 +355,7 @@ begin
       update public.profiles
       set 
         total_messages_count = coalesce(total_messages_count, 0) + 1
-      where id = new.sender_id;
+      where id = p_sender_id;
     elsif days_diff = 1 then
       -- Consecutive day messaging: increment streak & count, update active timestamp
       update public.profiles
@@ -417,7 +363,7 @@ begin
         streak_count = coalesce(streak_count, 0) + 1,
         total_messages_count = coalesce(total_messages_count, 0) + 1,
         updated_at = now()
-      where id = new.sender_id;
+      where id = p_sender_id;
     else
       -- Streak broken: reset streak to 1, increment count, update active timestamp
       update public.profiles
@@ -425,18 +371,138 @@ begin
         streak_count = 1,
         total_messages_count = coalesce(total_messages_count, 0) + 1,
         updated_at = now()
-      where id = new.sender_id;
+      where id = p_sender_id;
     end if;
   end if;
-
-  return new;
 end;
 $$ language plpgsql security definer;
 
--- 3. Create Trigger to automate updates on message insert
-drop trigger if exists on_message_sent_update_stats on public.messages;
-create trigger on_message_sent_update_stats
-  after insert on public.messages
-  for each row execute procedure public.increment_message_stats();
+-- ====================================================================
+-- CHAT HISTORY MANIPULATION FUNCTIONS (JSON Array)
+-- ====================================================================
+
+-- 1. Send Chat Message
+create or replace function public.send_chat_message(
+  p_channel_id uuid,
+  p_sub_channel_id uuid,
+  p_message jsonb
+)
+returns void as $$
+begin
+  -- Ensure a row exists in channel_chats for this channel/sub-channel
+  insert into public.channel_chats (channel_id, sub_channel_id, chats)
+  values (p_channel_id, p_sub_channel_id, '[]'::jsonb)
+  on conflict (channel_id) where sub_channel_id is null do nothing;
+
+  -- (Handling unique constraint conflict for sub_channels)
+  if p_sub_channel_id is not null then
+    insert into public.channel_chats (channel_id, sub_channel_id, chats)
+    values (p_channel_id, p_sub_channel_id, '[]'::jsonb)
+    on conflict (channel_id, sub_channel_id) where sub_channel_id is not null do nothing;
+  end if;
+
+  -- Append the new message to the chats array
+  update public.channel_chats
+  set chats = chats || jsonb_build_array(p_message)
+  where channel_id = p_channel_id
+  and (
+    (sub_channel_id = p_sub_channel_id) or 
+    (sub_channel_id is null and p_sub_channel_id is null)
+  );
+
+  -- Trigger user message stats increment
+  perform public.increment_message_stats((p_message->>'sender_id')::uuid);
+end;
+$$ language plpgsql security definer;
+
+-- 2. Edit Chat Message
+create or replace function public.edit_chat_message(
+  p_channel_id uuid,
+  p_sub_channel_id uuid,
+  p_message_id uuid,
+  p_content text
+)
+returns void as $$
+begin
+  update public.channel_chats
+  set chats = (
+    select coalesce(jsonb_agg(
+      case 
+        when (elem->>'id')::uuid = p_message_id then 
+          elem || jsonb_build_object('content', p_content, 'is_edited', true)
+        else elem
+      end
+    ), '[]'::jsonb)
+    from jsonb_array_elements(chats) as elem
+  )
+  where channel_id = p_channel_id
+  and (
+    (sub_channel_id = p_sub_channel_id) or 
+    (sub_channel_id is null and p_sub_channel_id is null)
+  );
+end;
+$$ language plpgsql security definer;
+
+-- 3. Delete Chat Message
+create or replace function public.delete_chat_message(
+  p_channel_id uuid,
+  p_sub_channel_id uuid,
+  p_message_id uuid
+)
+returns void as $$
+begin
+  update public.channel_chats
+  set chats = (
+    select coalesce(jsonb_agg(elem), '[]'::jsonb)
+    from jsonb_array_elements(chats) as elem
+    where (elem->>'id')::uuid <> p_message_id
+  )
+  where channel_id = p_channel_id
+  and (
+    (sub_channel_id = p_sub_channel_id) or 
+    (sub_channel_id is null and p_sub_channel_id is null)
+  );
+end;
+$$ language plpgsql security definer;
+
+-- 4. Toggle Chat Reaction
+create or replace function public.toggle_chat_reaction(
+  p_channel_id uuid,
+  p_sub_channel_id uuid,
+  p_message_id uuid,
+  p_profile_id uuid,
+  p_emoji text
+)
+returns void as $$
+begin
+  update public.channel_chats
+  set chats = (
+    select coalesce(jsonb_agg(
+      case 
+        when (elem->>'id')::uuid = p_message_id then 
+          case 
+            -- Check if user already reacted with this emoji
+            when coalesce(elem->'reactions', '[]'::jsonb) @> jsonb_build_array(jsonb_build_object('profile_id', p_profile_id, 'emoji', p_emoji)) then
+              elem || jsonb_build_object('reactions', (
+                select coalesce(jsonb_agg(r), '[]'::jsonb)
+                from jsonb_array_elements(coalesce(elem->'reactions', '[]'::jsonb)) r
+                where not (r @> jsonb_build_object('profile_id', p_profile_id, 'emoji', p_emoji))
+              ))
+            -- Otherwise, add it
+            else
+              elem || jsonb_build_object('reactions', coalesce(elem->'reactions', '[]'::jsonb) || jsonb_build_array(jsonb_build_object('profile_id', p_profile_id, 'emoji', p_emoji)))
+          end
+        else elem
+      end
+    ), '[]'::jsonb)
+    from jsonb_array_elements(chats) as elem
+  )
+  where channel_id = p_channel_id
+  and (
+    (sub_channel_id = p_sub_channel_id) or 
+    (sub_channel_id is null and p_sub_channel_id is null)
+  );
+end;
+$$ language plpgsql security definer;
 
 

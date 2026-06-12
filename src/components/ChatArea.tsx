@@ -74,8 +74,9 @@ export const ChatArea: React.FC = () => {
   const dmDetails = activeConversation.is_dm ? getDMDetails(activeConversation.id) : null;
   const channelMembersCount = members.filter(m => m.conversation_id === activeConversation.id).length;
 
-  // Filter messages based on search text
+  // Filter messages based on search text and only render top-level messages in main feed
   const filteredMessages = messages.filter((msg) => {
+    if (msg.parent_id) return false;
     if (!searchQuery.trim()) return true;
     return msg.content.toLowerCase().includes(searchQuery.toLowerCase());
   });

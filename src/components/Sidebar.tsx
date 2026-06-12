@@ -9,7 +9,8 @@ import {
   ChevronDown, 
   ChevronRight, 
   Users,
-  Search
+  Search,
+  Trash2
 } from 'lucide-react';
 import { CreateChannelModal, StartDMModal, ProfileModal, SearchConversationsModal } from './Modals';
 
@@ -19,7 +20,8 @@ export const Sidebar: React.FC = () => {
     members, 
     profiles, 
     activeConversation, 
-    setActiveConversationId 
+    setActiveConversationId,
+    deleteConversation
   } = useChat();
 
   const { user, profile, signOut } = useAuth();
@@ -43,6 +45,17 @@ export const Sidebar: React.FC = () => {
     window.addEventListener('keydown', handleGlobalKeyDown);
     return () => window.removeEventListener('keydown', handleGlobalKeyDown);
   }, []);
+
+  const handleDeleteConversation = async (id: string, name: string) => {
+    if (window.confirm(`Are you sure you want to delete "${name}"? This will permanently delete all chat history in Supabase.`)) {
+      try {
+        await deleteConversation(id);
+      } catch (err: any) {
+        console.error('Failed to delete conversation:', err);
+        alert(`Failed to delete conversation: ${err.message || String(err)}`);
+      }
+    }
+  };
 
   // Filter conversations
   const channels = conversations.filter(c => !c.is_dm);
@@ -158,7 +171,21 @@ export const Sidebar: React.FC = () => {
                           <Hash size={16} style={{ color: activeConversation?.id === parent.id ? 'var(--text-primary)' : 'var(--text-muted)' }} />
                           <span style={{ fontWeight: children.length > 0 ? 600 : 400 }}>{parent.name}</span>
                         </div>
-                        {parent.is_private && <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>🔒</span>}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          {parent.is_private && <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>🔒</span>}
+                          {(parent.created_by === user?.id) && (
+                            <button
+                              className="sidebar-delete-btn"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDeleteConversation(parent.id, `#${parent.name}`);
+                              }}
+                              title="Delete Channel"
+                            >
+                              <Trash2 size={13} />
+                            </button>
+                          )}
+                        </div>
                       </div>
 
                       {children.map((child) => (
@@ -173,7 +200,21 @@ export const Sidebar: React.FC = () => {
                             <Hash size={14} style={{ color: activeConversation?.id === child.id ? 'var(--text-primary)' : 'var(--text-muted)' }} />
                             <span style={{ fontSize: '0.85rem', color: activeConversation?.id === child.id ? 'var(--text-primary)' : 'var(--text-secondary)' }}>{child.name}</span>
                           </div>
-                          {child.is_private && <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>🔒</span>}
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            {child.is_private && <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>🔒</span>}
+                            {(child.created_by === user?.id) && (
+                              <button
+                                className="sidebar-delete-btn"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleDeleteConversation(child.id, `#${child.name}`);
+                                }}
+                                title="Delete Sub-Channel"
+                              >
+                                <Trash2 size={12} />
+                              </button>
+                            )}
+                          </div>
                         </div>
                       ))}
                     </React.Fragment>
@@ -223,14 +264,26 @@ export const Sidebar: React.FC = () => {
                           {details.name}
                         </span>
                       </div>
-                      {details.statusText && (
-                        <span 
-                          title={details.statusText} 
-                          style={{ fontSize: '0.8rem', opacity: 0.6, cursor: 'help' }}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        {details.statusText && (
+                          <span 
+                            title={details.statusText} 
+                            style={{ fontSize: '0.8rem', opacity: 0.6, cursor: 'help' }}
+                          >
+                            💬
+                          </span>
+                        )}
+                        <button
+                          className="sidebar-delete-btn"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDeleteConversation(dm.id, `DM with ${details.name}`);
+                          }}
+                          title="Close Direct Message"
                         >
-                          💬
-                        </span>
-                      )}
+                          <Trash2 size={12} />
+                        </button>
+                      </div>
                     </div>
                   );
                 })}

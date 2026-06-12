@@ -66,6 +66,7 @@ interface ChatContextType {
   addConversationMember: (conversationId: string, profileId: string, role?: string) => Promise<void>;
   updateConversationMemberRole: (conversationId: string, profileId: string, role: string) => Promise<void>;
   removeConversationMember: (conversationId: string, profileId: string) => Promise<void>;
+  deleteConversation: (conversationId: string) => Promise<void>;
 }
 
 const ChatContext = createContext<ChatContextType | undefined>(undefined);
@@ -82,7 +83,6 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
   
   const [messages, setMessages] = useState<Message[]>([]);
   const [threadParent, setThreadParentState] = useState<Message | null>(null);
-  const [threadReplies, setThreadReplies] = useState<Message[]>([]);
   
   const [typingUsers, setTypingUsers] = useState<{ [username: string]: boolean }>({});
   
@@ -94,6 +94,21 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const typingTimeoutRef = useRef<{ [username: string]: any }>({});
   const broadcastChannelRef = useRef<any>(null);
 
+  // Helper to extract channel keys for JSON chats lookup
+  const getChatKeys = (conv: Conversation) => {
+    if (conv.is_dm) {
+      return { channelId: conv.id, subChannelId: null };
+    }
+    if (conv.parent_id) {
+      return { channelId: conv.parent_id, subChannelId: conv.id };
+    }
+    return { channelId: conv.id, subChannelId: null };
+  };
+
+  const threadReplies = threadParent 
+    ? messages.filter(m => m.parent_id === threadParent.id) 
+    : [];
+
   const setActiveConversationId = (id: string | null) => {
     setActiveConversationIdState(id);
     activeConvIdRef.current = id;
@@ -103,11 +118,6 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const setThreadParent = (message: Message | null) => {
     setThreadParentState(message);
     threadParentIdRef.current = message ? message.id : null;
-    if (message) {
-      fetchThreadReplies(message.id);
-    } else {
-      setThreadReplies([]);
-    }
   };
 
   // Fetch all initial metadata (profiles, conversations user belongs to, and memberships)
@@ -150,39 +160,31 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  // Fetch messages in the active conversation (excluding nested thread replies)
-  const fetchMessages = async (convId: string) => {
+  // Fetch messages in the active conversation from JSON Chats array
+  const fetchMessages = async (conv: Conversation) => {
     setLoadingMessages(true);
     try {
-      const { data, error } = await supabase
-        .from('messages')
-        .select('*, profiles:sender_id(*), reactions(*)')
-        .eq('conversation_id', convId)
-        .is('parent_id', null) // Only top level messages
-        .order('created_at', { ascending: true });
+      const { channelId, subChannelId } = getChatKeys(conv);
+      let query = supabase
+        .from('channel_chats')
+        .select('chats')
+        .eq('channel_id', channelId);
+
+      if (subChannelId) {
+        query = query.eq('sub_channel_id', subChannelId);
+      } else {
+        query = query.is('sub_channel_id', null);
+      }
+
+      const { data, error } = await query.maybeSingle();
 
       if (error) throw error;
-      setMessages(data || []);
+      setMessages(data?.chats || []);
     } catch (err) {
       console.error('Error loading messages:', err);
+      setMessages([]);
     } finally {
       setLoadingMessages(false);
-    }
-  };
-
-  // Fetch replies in an active thread
-  const fetchThreadReplies = async (messageId: string) => {
-    try {
-      const { data, error } = await supabase
-        .from('messages')
-        .select('*, profiles:sender_id(*), reactions(*)')
-        .eq('parent_id', messageId)
-        .order('created_at', { ascending: true });
-
-      if (error) throw error;
-      setThreadReplies(data || []);
-    } catch (err) {
-      console.error('Error loading thread replies:', err);
     }
   };
 
@@ -204,7 +206,11 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (activeConversationId) {
       const found = conversations.find(c => c.id === activeConversationId);
       setActiveConversation(found || null);
-      fetchMessages(activeConversationId);
+      if (found) {
+        fetchMessages(found);
+      } else {
+        setMessages([]);
+      }
       
       // Hook up Broadcast typing indicator channel
       if (broadcastChannelRef.current) {
@@ -251,101 +257,41 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => {
     if (!user) return;
 
-    // Listen to changes in messages, reactions, profiles, and conversations
+    // Listen to changes in channel_chats, profiles, and conversations
     const channel = supabase.channel('schema-db-changes');
 
     channel
-      // MESSAGE CHANGES
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, async (payload) => {
+      // CHANNEL CHATS ARRAY RE-SYNC
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'channel_chats' }, (payload) => {
         const { eventType, new: newRecord, old: oldRecord } = payload;
+        
+        if (eventType === 'INSERT' || eventType === 'UPDATE') {
+          if (activeConvIdRef.current) {
+            const activeConv = conversations.find(c => c.id === activeConvIdRef.current);
+            if (activeConv) {
+              const { channelId, subChannelId } = getChatKeys(activeConv);
+              const isMatch = newRecord.channel_id === channelId && 
+                (newRecord.sub_channel_id === subChannelId || 
+                 (!newRecord.sub_channel_id && !subChannelId));
 
-        if (eventType === 'INSERT') {
-          // Resolve sender profile for the new message
-          const { data: senderProfile } = await supabase
-            .from('profiles')
-            .select('*')
-            .eq('id', newRecord.sender_id)
-            .single();
-
-          const enrichedMessage: Message = {
-            ...newRecord as Message,
-            profiles: senderProfile,
-            reactions: []
-          };
-
-          // 1. Check if it's a top-level message for the active conversation
-          if (enrichedMessage.conversation_id === activeConvIdRef.current && !enrichedMessage.parent_id) {
-            setMessages(prev => {
-              if (prev.some(m => m.id === enrichedMessage.id)) return prev;
-              return [...prev, enrichedMessage];
-            });
-          }
-
-          // 2. Check if it's a thread reply for the active thread
-          if (enrichedMessage.parent_id === threadParentIdRef.current) {
-            setThreadReplies(prev => {
-              if (prev.some(m => m.id === enrichedMessage.id)) return prev;
-              return [...prev, enrichedMessage];
-            });
-
-            // Update reply counts inside main messages list
-            setMessages(prev => prev.map(m => {
-              if (m.id === enrichedMessage.parent_id) {
-                // Trigger profile refetch or state increase
-                return { ...m }; // React render refresh trigger
+              if (isMatch) {
+                setMessages(newRecord.chats || []);
               }
-              return m;
-            }));
-          }
-        } else if (eventType === 'UPDATE') {
-          setMessages(prev => prev.map(m => m.id === newRecord.id ? { ...m, ...newRecord } : m));
-          setThreadReplies(prev => prev.map(m => m.id === newRecord.id ? { ...m, ...newRecord } : m));
-          
-          if (threadParentIdRef.current === newRecord.id) {
-            setThreadParentState(prev => prev ? { ...prev, ...newRecord } : null);
-          }
-        } else if (eventType === 'DELETE') {
-          setMessages(prev => prev.filter(m => m.id !== oldRecord.id));
-          setThreadReplies(prev => prev.filter(m => m.id !== oldRecord.id));
-          
-          if (threadParentIdRef.current === oldRecord.id) {
-            setThreadParentState(null);
-          }
-        }
-      })
-      // REACTION CHANGES
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'reactions' }, (payload) => {
-        const { eventType, new: newRecord, old: oldRecord } = payload;
-
-        const updateMessageReactions = (msgs: Message[], targetMsgId: string, reaction: any, type: 'add' | 'remove') => {
-          return msgs.map(m => {
-            if (m.id !== targetMsgId) return m;
-            const currentReactions = m.reactions || [];
-            let nextReactions = [...currentReactions];
-            
-            if (type === 'add') {
-              if (!nextReactions.some(r => r.id === reaction.id)) {
-                nextReactions.push(reaction);
-              }
-            } else {
-              nextReactions = nextReactions.filter(r => r.id !== reaction.id);
             }
-            return { ...m, reactions: nextReactions };
-          });
-        };
-
-        if (eventType === 'INSERT') {
-          setMessages(prev => updateMessageReactions(prev, newRecord.message_id, newRecord, 'add'));
-          setThreadReplies(prev => updateMessageReactions(prev, newRecord.message_id, newRecord, 'add'));
-          if (threadParentIdRef.current === newRecord.message_id) {
-            setThreadParentState(prev => prev ? { ...prev, reactions: [...(prev.reactions || []), newRecord as Reaction] } : null);
           }
         } else if (eventType === 'DELETE') {
-          // oldRecord contains only the keys (id, message_id)
-          setMessages(prev => updateMessageReactions(prev, oldRecord.message_id || '', oldRecord, 'remove'));
-          setThreadReplies(prev => updateMessageReactions(prev, oldRecord.message_id || '', oldRecord, 'remove'));
-          if (threadParentIdRef.current === oldRecord.message_id) {
-            setThreadParentState(prev => prev ? { ...prev, reactions: (prev.reactions || []).filter(r => r.id !== oldRecord.id) } : null);
+          if (activeConvIdRef.current) {
+            const activeConv = conversations.find(c => c.id === activeConvIdRef.current);
+            if (activeConv) {
+              const { channelId, subChannelId } = getChatKeys(activeConv);
+              const isMatch = oldRecord.channel_id === channelId && 
+                (oldRecord.sub_channel_id === subChannelId || 
+                 (!oldRecord.sub_channel_id && !subChannelId));
+
+              if (isMatch) {
+                setMessages([]);
+              }
+            }
           }
         }
       })
@@ -388,7 +334,7 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return () => {
       channel.unsubscribe();
     };
-  }, [user]);
+  }, [user, conversations]);
 
   // Operations
   const createChannel = async (name: string, description: string, isPrivate: boolean, parentId: string | null = null): Promise<Conversation> => {
@@ -494,73 +440,116 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const sendMessage = async (content: string, parentId: string | null = null): Promise<Message> => {
-    if (!user || !activeConversationId) throw new Error('Cannot send message');
+    if (!user || !activeConversation) throw new Error('Cannot send message');
 
-    const { data, error } = await supabase
-      .from('messages')
-      .insert({
-        conversation_id: activeConversationId,
-        sender_id: user.id,
-        content,
-        parent_id: parentId
-      })
-      .select()
-      .single();
+    const newMessage: Message = {
+      id: crypto.randomUUID(),
+      conversation_id: activeConversation.id,
+      sender_id: user.id,
+      content,
+      parent_id: parentId,
+      is_edited: false,
+      created_at: new Date().toISOString(),
+      reactions: []
+    };
+
+    const { channelId, subChannelId } = getChatKeys(activeConversation);
+
+    const { error } = await supabase.rpc('send_chat_message', {
+      p_channel_id: channelId,
+      p_sub_channel_id: subChannelId,
+      p_message: newMessage
+    });
 
     if (error) throw error;
-    return data;
+    
+    // Optimistically update local messages array
+    setMessages(prev => [...prev, newMessage]);
+    
+    return newMessage;
   };
 
   const editMessage = async (messageId: string, content: string): Promise<void> => {
-    const { error } = await supabase
-      .from('messages')
-      .update({ content, is_edited: true })
-      .eq('id', messageId);
+    if (!user || !activeConversation) throw new Error('Cannot edit message');
+
+    const { channelId, subChannelId } = getChatKeys(activeConversation);
+
+    const { error } = await supabase.rpc('edit_chat_message', {
+      p_channel_id: channelId,
+      p_sub_channel_id: subChannelId,
+      p_message_id: messageId,
+      p_content: content
+    });
 
     if (error) throw error;
+
+    // Optimistically update local message content
+    setMessages(prev => prev.map(m => m.id === messageId ? { ...m, content, is_edited: true } : m));
   };
 
   const deleteMessage = async (messageId: string): Promise<void> => {
-    const { error } = await supabase
-      .from('messages')
-      .delete()
-      .eq('id', messageId);
+    if (!user || !activeConversation) throw new Error('Cannot delete message');
+
+    const { channelId, subChannelId } = getChatKeys(activeConversation);
+
+    const { error } = await supabase.rpc('delete_chat_message', {
+      p_channel_id: channelId,
+      p_sub_channel_id: subChannelId,
+      p_message_id: messageId
+    });
 
     if (error) throw error;
+
+    // Optimistically remove local message
+    setMessages(prev => prev.filter(m => m.id !== messageId));
   };
 
   const toggleReaction = async (messageId: string, emoji: string): Promise<void> => {
-    if (!user) return;
+    if (!user || !activeConversation) return;
 
-    // Check if reaction already exists
-    const { data: existing, error: fetchErr } = await supabase
-      .from('reactions')
-      .select('*')
-      .eq('message_id', messageId)
-      .eq('profile_id', user.id)
-      .eq('emoji', emoji)
-      .maybeSingle();
+    const { channelId, subChannelId } = getChatKeys(activeConversation);
 
-    if (fetchErr) throw fetchErr;
+    const { error } = await supabase.rpc('toggle_chat_reaction', {
+      p_channel_id: channelId,
+      p_sub_channel_id: subChannelId,
+      p_message_id: messageId,
+      p_profile_id: user.id,
+      p_emoji: emoji
+    });
 
-    if (existing) {
-      // Remove it
-      const { error: deleteErr } = await supabase
-        .from('reactions')
-        .delete()
-        .eq('id', existing.id);
-      if (deleteErr) throw deleteErr;
-    } else {
-      // Add it
-      const { error: insertErr } = await supabase
-        .from('reactions')
-        .insert({
+    if (error) throw error;
+
+    // Optimistically toggle reaction locally
+    setMessages(prev => prev.map(m => {
+      if (m.id !== messageId) return m;
+      const currentReactions = m.reactions || [];
+      const hasReaction = currentReactions.some(r => r.profile_id === user.id && r.emoji === emoji);
+      
+      let nextReactions;
+      if (hasReaction) {
+        nextReactions = currentReactions.filter(r => !(r.profile_id === user.id && r.emoji === emoji));
+      } else {
+        nextReactions = [...currentReactions, {
+          id: crypto.randomUUID(),
           message_id: messageId,
           profile_id: user.id,
-          emoji
-        });
-      if (insertErr) throw insertErr;
-    }
+          emoji,
+          created_at: new Date().toISOString()
+        }];
+      }
+      return { ...m, reactions: nextReactions };
+    }));
+  };
+
+  const deleteConversation = async (conversationId: string): Promise<void> => {
+    if (!user) throw new Error('Not authenticated');
+
+    const { error } = await supabase
+      .from('conversations')
+      .delete()
+      .eq('id', conversationId);
+
+    if (error) throw error;
   };
 
   const sendTypingSignal = () => {
@@ -626,7 +615,8 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         sendTypingSignal,
         addConversationMember,
         updateConversationMemberRole,
-        removeConversationMember
+        removeConversationMember,
+        deleteConversation
       }}
     >
       {children}

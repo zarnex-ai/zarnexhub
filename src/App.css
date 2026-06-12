@@ -962,3 +962,25 @@
 .emoji-btn:hover {
   background-color: rgba(255, 255, 255, 0.06);
 }
+
+/* Sidebar item delete button hover style */
+.sidebar-delete-btn {
+  opacity: 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-muted);
+  padding: 2px;
+  display: flex;
+  align-items: center;
+  transition: opacity var(--transition-fast), color var(--transition-fast);
+}
+
+.sidebar-item:hover .sidebar-delete-btn {
+  opacity: 0.6;
+}
+
+.sidebar-item:hover .sidebar-delete-btn:hover {
+  opacity: 1;
+  color: #f87171 !important;
+}

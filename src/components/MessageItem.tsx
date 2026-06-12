@@ -1,9 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { useChat } from '../context/ChatContext';
 import type { Message, Reaction } from '../context/ChatContext';
 import { useAuth } from '../context/AuthContext';
 import { Edit2, Trash2, MessageSquare, Smile, Check, X } from 'lucide-react';
-import { supabase } from '../lib/supabase';
 
 interface MessageItemProps {
   message: Message;
@@ -12,12 +11,14 @@ interface MessageItemProps {
 
 export const MessageItem: React.FC<MessageItemProps> = ({ message, isThreadView = false }) => {
   const { user } = useAuth();
-  const { editMessage, deleteMessage, toggleReaction, setThreadParent } = useChat();
+  const { editMessage, deleteMessage, toggleReaction, setThreadParent, messages, profiles } = useChat();
 
   const [isEditing, setIsEditing] = useState(false);
   const [editContent, setEditContent] = useState(message.content);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
-  const [replyCount, setReplyCount] = useState(0);
+
+  // Lookup sender profile from the global list loaded in ChatContext
+  const senderProfile = profiles.find(p => p.id === message.sender_id);
 
   // Predefined reaction emojis
   const quickEmojis = ['👍', '❤️', '😂', '🔥', '🎉', '🚀'];
@@ -38,39 +39,7 @@ export const MessageItem: React.FC<MessageItemProps> = ({ message, isThreadView 
     return acc;
   }, {} as { [emoji: string]: { emoji: string; count: number; userIds: string[]; reactions: Reaction[] } });
 
-  // Fetch thread replies count
-  useEffect(() => {
-    if (isThreadView) return; // Replies count not needed inside the thread panel itself
-    
-    const fetchReplyCount = async () => {
-      const { count, error } = await supabase
-        .from('messages')
-        .select('*', { count: 'exact', head: true })
-        .eq('parent_id', message.id);
-      if (!error && count !== null) {
-        setReplyCount(count);
-      }
-    };
-
-    fetchReplyCount();
-
-    // Subscribe to replies of this message to update count in real-time
-    const channel = supabase
-      .channel(`replies-count-${message.id}`)
-      .on('postgres_changes', { 
-        event: '*', 
-        schema: 'public', 
-        table: 'messages',
-        filter: `parent_id=eq.${message.id}`
-      }, () => {
-        fetchReplyCount();
-      })
-      .subscribe();
-
-    return () => {
-      channel.unsubscribe();
-    };
-  }, [message.id, isThreadView]);
+  const replyCount = isThreadView ? 0 : messages.filter(m => m.parent_id === message.id).length;
 
   const handleEdit = async () => {
     if (!editContent.trim() || editContent === message.content) {
@@ -116,14 +85,14 @@ export const MessageItem: React.FC<MessageItemProps> = ({ message, isThreadView 
       {/* Sender Avatar */}
       <div className="avatar-wrapper" style={{ alignSelf: 'flex-start' }}>
         <div className="avatar">
-          {message.profiles?.avatar_url ? (
+          {senderProfile?.avatar_url ? (
             <img 
-              src={message.profiles.avatar_url} 
+              src={senderProfile.avatar_url} 
               alt="" 
               style={{ width: '100%', height: '100%', borderRadius: 'inherit', objectFit: 'cover' }} 
             />
           ) : (
-            (message.profiles?.username || 'U').substring(0, 2).toUpperCase()
+            (senderProfile?.username || 'U').substring(0, 2).toUpperCase()
           )}
         </div>
       </div>
@@ -132,8 +101,8 @@ export const MessageItem: React.FC<MessageItemProps> = ({ message, isThreadView 
       <div className="message-main">
         <div className="message-header">
           <span className="message-sender" style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-            <span>{message.profiles?.full_name || `@${message.profiles?.username || 'unknown'}`}</span>
-            {(message.profiles?.streak_count || 0) > 0 && (
+            <span>{senderProfile?.full_name || `@${senderProfile?.username || 'unknown'}`}</span>
+            {(senderProfile?.streak_count || 0) > 0 && (
               <span 
                 style={{ 
                   fontSize: '0.75rem', 
@@ -145,7 +114,7 @@ export const MessageItem: React.FC<MessageItemProps> = ({ message, isThreadView 
                 }} 
                 title="Active messaging streak!"
               >
-                🔥 {message.profiles?.streak_count}
+                🔥 {senderProfile?.streak_count}
               </span>
             )}
           </span>
