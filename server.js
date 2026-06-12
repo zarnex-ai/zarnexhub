@@ -2,12 +2,20 @@ import express from 'express';
 import nodemailer from 'nodemailer';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
 dotenv.config();
 
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Serve static assets from the frontend build directory
+app.use(express.static(path.join(__dirname, 'dist')));
 
 // In-memory store for OTPs
 const otpStore = new Map();
@@ -93,6 +101,11 @@ app.post('/api/verify-otp', (req, res) => {
 
   otpStore.delete(email.toLowerCase());
   res.json({ success: true });
+});
+
+// Serve index.html for all other routes to support React Router client-side navigation
+app.get('*', (req, res) => {
+  res.sendFile(path.join(__dirname, 'dist', 'index.html'));
 });
 
 const PORT = process.env.PORT || 5000;
