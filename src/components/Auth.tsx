@@ -15,12 +15,14 @@ export const Auth: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [isVerifyingOtp, setIsVerifyingOtp] = useState(false);
   const [otpToken, setOtpToken] = useState('');
-
+  const [otpHash, setOtpHash] = useState('');
+  const [otpExpiresAt, setOtpExpiresAt] = useState<number>(0);
+ 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setError(null);
-
+ 
     try {
       if (isSignUp) {
         if (!username) {
@@ -35,20 +37,22 @@ export const Auth: React.FC = () => {
           },
           body: JSON.stringify({ email }),
         });
-
+ 
         const data = await response.json();
         if (!response.ok) {
           throw new Error(data.error || 'Failed to send verification email');
         }
-
-        // OTP sent successfully, switch to verification screen
+ 
+        // Store the stateless verification tokens returned by backend
+        setOtpHash(data.hash);
+        setOtpExpiresAt(data.expiresAt);
         setIsVerifyingOtp(true);
       } else {
         const { error: signInError } = await supabase.auth.signInWithPassword({
           email,
           password,
         });
-
+ 
         if (signInError) throw signInError;
         
         confetti({
@@ -64,32 +68,37 @@ export const Auth: React.FC = () => {
       setLoading(false);
     }
   };
-
+ 
   const handleVerifyOtp = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!otpToken) {
       setError('Please enter the verification code');
       return;
     }
-
+ 
     setLoading(true);
     setError(null);
-
+ 
     try {
-      // 1. Verify OTP using our custom backend server
+      // 1. Verify OTP using our custom backend server (passing stateless hash tokens)
       const verifyResponse = await fetch(`${API_URL}/api/verify-otp`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ email, code: otpToken.trim() }),
+        body: JSON.stringify({ 
+          email, 
+          code: otpToken.trim(), 
+          hash: otpHash, 
+          expiresAt: otpExpiresAt 
+        }),
       });
-
+ 
       const verifyData = await verifyResponse.json();
       if (!verifyResponse.ok) {
         throw new Error(verifyData.error || 'Invalid verification code');
       }
-
+ 
       // 2. If backend verification succeeded, create the user in Supabase Auth
       const { data, error: signUpError } = await supabase.auth.signUp({
         email,
@@ -101,16 +110,16 @@ export const Auth: React.FC = () => {
           },
         },
       });
-
+ 
       if (signUpError) throw signUpError;
-
+ 
       confetti({
         particleCount: 120,
         spread: 80,
         colors: ['#8b5cf6', '#a78bfa', '#10b981'],
         origin: { y: 0.6 }
       });
-
+ 
       // If email confirmation is disabled on Supabase, the user is automatically logged in.
       // Otherwise, we inform them and clear states.
       if (!data?.session) {
@@ -118,6 +127,8 @@ export const Auth: React.FC = () => {
         setIsSignUp(false);
         setIsVerifyingOtp(false);
         setOtpToken('');
+        setOtpHash('');
+        setOtpExpiresAt(0);
       }
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Verification failed. Please check the code and try again.');
@@ -125,7 +136,7 @@ export const Auth: React.FC = () => {
       setLoading(false);
     }
   };
-
+ 
   const handleResendOtp = async () => {
     setLoading(true);
     setError(null);
@@ -137,12 +148,14 @@ export const Auth: React.FC = () => {
         },
         body: JSON.stringify({ email }),
       });
-
+ 
       const data = await response.json();
       if (!response.ok) {
         throw new Error(data.error || 'Failed to resend verification code');
       }
-
+ 
+      setOtpHash(data.hash);
+      setOtpExpiresAt(data.expiresAt);
       alert(`Verification code resent successfully to ${email}`);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Failed to resend verification code.');
