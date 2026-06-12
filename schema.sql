@@ -195,7 +195,12 @@ create policy "Allow membership joining"
   to authenticated
   with check (
     profile_id = auth.uid() or
-    public.is_admin_or_owner(conversation_id, auth.uid())
+    public.is_admin_or_owner(conversation_id, auth.uid()) or
+    exists (
+      select 1 from public.conversations
+      where id = conversation_id
+      and created_by = auth.uid()
+    )
   );
 
 -- Owners/Admins can change roles

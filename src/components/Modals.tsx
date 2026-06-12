@@ -131,6 +131,7 @@ export const StartDMModal: React.FC<ModalProps> = ({ onClose }) => {
   const { profile: currentProfile } = useAuth();
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const filteredProfiles = profiles.filter((p) => {
     if (p.id === currentProfile?.id) return false;
@@ -142,11 +143,13 @@ export const StartDMModal: React.FC<ModalProps> = ({ onClose }) => {
 
   const handleSelectUser = async (profileId: string) => {
     setLoading(true);
+    setError(null);
     try {
       await startDM(profileId);
       onClose();
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to start DM:', err);
+      setError(err.message || 'Failed to start direct message');
     } finally {
       setLoading(false);
     }
@@ -163,6 +166,7 @@ export const StartDMModal: React.FC<ModalProps> = ({ onClose }) => {
         </div>
 
         <div className="modal-body">
+          {error && <div className="auth-error" style={{ marginBottom: '1rem' }}>{error}</div>}
           <div className="search-container" style={{ width: '100%' }}>
             <Search size={16} className="search-icon" />
             <input
